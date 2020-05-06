@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/vendor/guzzlehttp/promises" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/vendor/guzzlehttp/psr7" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/vendor/guzzlehttp/ringphp" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/vendor/guzzlehttp/streams" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/vendor/psr/http-message" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/vendor/react/promise" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/vendor/symfony/polyfill-php80" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/vendor/symfony/process" vcs="Git" />
+  </component>
+</project>

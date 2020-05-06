@@ -1,0 +1,25 @@
+{
+  "name": "cjb/learn",
+  "description": "not",
+  "type": "project",
+  "authors": [
+    {
+      "name": "cjb",
+      "email": "644949524@qq.com"
+    }
+  ],
+  "repositories": {
+    "packagist": {
+      "type": "composer",
+      "url": "https://mirrors.aliyun.com/composer/"
+    }
+  },
+  "minimum-stability": "dev",
+  "autoload": {
+    "psr-4": {
+      "app\\": "app/"
+    }
+  },
+  "require": {
+  }
+}
