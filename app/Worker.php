@@ -116,6 +116,8 @@ class Worker
         static::parseCommand();
         //解锁
         static::unlock();
+        //守护进程
+        
     }
 
     /**
