@@ -97,6 +97,8 @@ class Worker
      */
     public static $pidFile = '';
 
+    public static $daemonize = false;
+
 
     /**
      * 运行
@@ -108,6 +110,12 @@ class Worker
         static::checkSapiEnv();
         //初始化操作
         static::init();
+        //加锁
+        static::lock();
+        //解析命令行
+        static::parseCommand();
+        //解锁
+        static::unlock();
     }
 
     /**
@@ -140,7 +148,7 @@ class Worker
         //产生一条回溯跟踪
         $backtrace = debug_backtrace();
         //开始文件名
-        static::$startFile = $backtrace[count($backtrace) - 1]['file'];
+        static::$startFile = $backtrace[count($backtrace) - 1]['file'];//index.php
         $uniquePrefix = str_replace('/', '_', static::$startFile);
         //定义pid文件路径和名字
         if (empty(static::$pidFile)) {
@@ -169,6 +177,81 @@ class Worker
         self::initId();
         //初始化定时器
         Timer::init();
+    }
+
+    /**
+     * Lock
+     * @return void
+     */
+    protected static function lock()
+    {
+        //对打开的这个文件加读锁
+        $fd = \fopen(static::$startFile, 'r');
+        if ($fd && !flock($fd, LOCK_EX)) {//LOCK_EX取得独占锁
+            static::log('Workerman[' . static::$startFile . '] already running.');
+        }
+    }
+
+
+    /**
+     * unlock
+     * @return void
+     */
+    protected static function unlock()
+    {
+        $fd = fopen(static::$startFile, 'r');
+        $fd && flock($fd, LOCK_UN);
+    }
+
+
+    protected static function parseCommand()
+    {
+        //获取命令行参数
+        global $argv;
+        $startFile = $argv[0];
+
+        $availableCommands = [
+            'start',
+            'stop',
+            'restart',
+            'reload',
+            'status',
+            'connections',
+        ];
+        //提示使用方法
+        $usage = "Usage: php yourfile <command> [mode]\nCommands: \nstart\t\tStart worker in DEBUG mode.\n\t\tUse mode -d to start in DAEMON mode.\nstop\t\tStop worker.\n\t\tUse mode -g to stop gracefully.\nrestart\t\tRestart workers.\n\t\tUse mode -d to start in DAEMON mode.\n\t\tUse mode -g to stop gracefully.\nreload\t\tReload codes.\n\t\tUse mode -g to reload gracefully.\nstatus\t\tGet worker status.\n\t\tUse mode -d to show live status.\nconnections\tGet worker connections.\n";
+        //校验命令
+        if (!isset($argv[1]) || !in_array($argv[1], $availableCommands)) {
+            if (isset($argv[1])) {
+                static::safeEcho('Unknown command:' . $argv[1] . '\n');
+            }
+            exit($usage);
+        }
+
+        //获取命令
+        $command = trim($argv[1]);
+        $command2 = isset($argv[2]) ?? '';
+
+        
+
+
+    }
+
+
+    /**
+     * @param $msg
+     * @return void
+     */
+    public static function log($msg)
+    {
+        $msg = $msg . "\n";
+        if (!static::$daemonize) {
+            static::safeEcho($msg);
+        }
+        //守护进程
+        $file = (string)static::$logFile;
+        $data = date('Y-m-d H:i:s') . '' . 'pid' . posix_getpid() . $msg;
+        file_put_contents($file, $data, FILE_APPEND | LOCK_EX);
     }
 
 
