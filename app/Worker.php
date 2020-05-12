@@ -204,6 +204,9 @@ class Worker
     }
 
 
+    /**
+     * 解析命令行这里不能先写，等后面安装信号弄明白再回头写。。。
+     */
     protected static function parseCommand()
     {
         //获取命令行参数
@@ -232,8 +235,65 @@ class Worker
         $command = trim($argv[1]);
         $command2 = isset($argv[2]) ?? '';
 
-        
+        $mode = '';
+        if ($command === 'start') {
+            if ($command2 === '-d' || static::$daemonize) {
+                $mode = 'in DAEMON mode';
+            } else {
+                $mode = 'in DEBUG mode';
+            }
+        }
 
+        static::log("Workerman[$startFile] $command $mode");
+
+        $masterPid = is_file(static::$pidFile) ? file_get_contents(static::$pidFile) : 0;
+        //判断进程是否存活 0 默认信号处理程序
+        $masterIsAlive = $masterPid && posix_kill($masterPid, 0) && posix_getpid() !== $masterPid;
+        if ($masterIsAlive) {
+            if ($command == 'start') {
+                static::log("Workerman[$startFile] alerady running");
+                exit;
+            } elseif ($command !== 'start' && $command !== 'restart') {
+                static::log("Workerman[$startFile] not run");
+                exit;
+            }
+        }
+
+        switch ($command) {
+            case 'start':
+                if ($command2 === '-d') {
+                    static::$daemonize = true;
+                }
+                break;
+            case 'status':
+                while (1) {
+                    if (is_file(static::$statisticsFile)) {
+                        @unlink(static::$statisticsFile);
+                    }
+                    //master进程发送信号去终止所有的子进程
+                    posix_kill($masterPid, SIGUSR2);//终止进程
+                    sleep(1);
+                    if ($command2 === '-d') {
+                        static::safeEcho("\33[H\33[2J\33(B\33[m", true);
+                    }
+                    //状态这里
+//                    static::safeEcho(static::formatStatusData());
+                    if ($command2 !== '-d') {
+                        exit(0);
+                    }
+                    static::safeEcho("\n Press Ctrl+c to quit.\n\n");
+                }
+                exit(0);
+
+            default :
+                exit(0);
+        }
+
+
+    }
+
+    protected static function formatStatusData()
+    {
 
     }
 
@@ -242,7 +302,8 @@ class Worker
      * @param $msg
      * @return void
      */
-    public static function log($msg)
+    public
+    static function log($msg)
     {
         $msg = $msg . "\n";
         if (!static::$daemonize) {
@@ -259,7 +320,8 @@ class Worker
      * 初始化worker_id映射关系
      * @return void
      */
-    protected static function initId()
+    protected
+    static function initId()
     {
         foreach (static::$workers as $worker_id => $worker) {
             $newIdMap = array();
@@ -276,7 +338,8 @@ class Worker
      * @param $title
      * @return void
      */
-    protected static function setProcessTitle($title)
+    protected
+    static function setProcessTitle($title)
     {
         set_error_handler(function () {
         });
@@ -297,7 +360,8 @@ class Worker
      * @param bool $decorated
      * @return bool
      */
-    public static function safeEcho($msg, $decorated = true)
+    public
+    static function safeEcho($msg, $decorated = true)
     {
         $stream = static::outputStream();
         if (!$stream) {
@@ -330,7 +394,8 @@ class Worker
      * @param null $stream
      * @return bool|false|resource
      */
-    private static function outputStream($stream = null)
+    private
+    static function outputStream($stream = null)
     {
         if (!$stream) {
             $stream = static::$outputStream ?: \STDOUT;
