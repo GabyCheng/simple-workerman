@@ -2,6 +2,8 @@
 
 namespace app;
 
+use mysql_xdevapi\Exception;
+
 require_once __DIR__ . '/Lib/Constants.php';
 
 class Worker
@@ -114,10 +116,11 @@ class Worker
         static::lock();
         //解析命令行
         static::parseCommand();
+        //守护进程
+        static::daemonize();
         //解锁
         static::unlock();
-        //守护进程
-        
+
     }
 
     /**
@@ -180,6 +183,46 @@ class Worker
         //初始化定时器
         Timer::init();
     }
+
+    /**
+     * run as deamon mode.
+     * @throws Exception
+     */
+    protected static function daemonize()
+    {
+        //守护进程即是让当前进程脱离终端控制，否则终端关闭进程也关闭了
+        static::$daemonize = 1;
+        if (!static::$daemonize) {
+            return;
+        }
+        //设置权限，看了unix网络编程，这个函数是创建屏蔽字也就是设置权限
+        umask(0);
+        // fork进程，主进程退出执行，子进程继续执行
+        // 注意这里的子进程不是指Worker进程
+        // 尽管是子进程，但他却依然是Master进程
+        $pid = pcntl_fork();
+        if (-1 === $pid) {
+            throw new Exception('fork fail');
+        } elseif ($pid > 0) {
+            exit(0);
+        }
+        // 子进程（Master进程）使用posix_setsid()创建新会话和进程组
+        // 这一句话便足以让当前进程脱离控制终端！
+        if (-1 === posix_setsid()) {
+            throw new Exception("setsid fail");
+        }
+        // 避免SVR4某些情况下情况下进程会再次获得控制终端
+        $pid = pcntl_fork();
+        echo $pid;
+        // 主进程再次终止运行，最终的子进程会成为Master进程变成
+        // daemon程序运行在后台，然后继续fork出Worker进程
+        if (-1 === $pid) {
+            throw new Exception("fork fail");
+        } elseif (0 !== $pid) {
+            exit(0);
+        }
+    }
+
 
     /**
      * Lock
