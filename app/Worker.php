@@ -99,8 +99,19 @@ class Worker
      */
     public static $pidFile = '';
 
+    /**
+     * 守护进程
+     * @var bool
+     */
     public static $daemonize = false;
 
+    /**
+     * 进程名称
+     * @var string
+     */
+    public $name = 'none';
+
+    public $user = '';
 
     /**
      * 运行
@@ -118,6 +129,8 @@ class Worker
         static::parseCommand();
         //守护进程
         static::daemonize();
+        //初始化workers
+        static::initWorkers();
         //解锁
         static::unlock();
 
@@ -221,6 +234,40 @@ class Worker
         } elseif (0 !== $pid) {
             exit(0);
         }
+
+    }
+
+    protected static function initWorkers()
+    {
+        foreach (static::$workers as $worker) {
+
+            if (empty($worker->name)) {
+                $worker->name = 'none';
+            }
+
+            if (empty($worker->user)) {
+                $worker->user = static::getCurrentUser();
+            } else {
+                //必须拥有根权限才能修改uid 和 gid
+                if (posix_getuid() !== 0 && $worker->name !== static::getCurrentUser()) {
+                    static::log('Warning: You must have the root privileges to change uid and gid');
+                }
+            }
+
+
+
+
+        }
+    }
+
+    /**
+     * 获取工作进程的用户
+     * @return string
+     */
+    protected static function getCurrentUser()
+    {
+        $user_info = posix_getpwuid(posix_getuid());
+        return $user_info['name'];
     }
 
 
@@ -347,8 +394,7 @@ class Worker
      * @param $msg
      * @return void
      */
-    public
-    static function log($msg)
+    public static function log($msg)
     {
         $msg = $msg . "\n";
         if (!static::$daemonize) {
@@ -365,8 +411,7 @@ class Worker
      * 初始化worker_id映射关系
      * @return void
      */
-    protected
-    static function initId()
+    protected static function initId()
     {
         foreach (static::$workers as $worker_id => $worker) {
             $newIdMap = array();
@@ -383,8 +428,7 @@ class Worker
      * @param $title
      * @return void
      */
-    protected
-    static function setProcessTitle($title)
+    protected static function setProcessTitle($title)
     {
         set_error_handler(function () {
         });
