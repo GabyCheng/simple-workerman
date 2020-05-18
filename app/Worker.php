@@ -15,6 +15,13 @@ class Worker
     const STATUS_STARTING = 1;
 
     /**
+     * Default backlog. Backlog is the maximum length of the queue of pending connections.
+     *
+     * @var int
+     */
+    const DEFAULT_BACKLOG = 102400;
+
+    /**
      * 日志文件
      * @var string
      */
@@ -57,6 +64,28 @@ class Worker
     protected static $startFile = '';
 
     /**
+     * 加载的文件路径
+     * @var string
+     */
+    protected $autoloadRootPath = '';
+
+
+    /**
+     * Socket name. The format is like this http://0.0.0.0:80 .
+     *
+     * @var string
+     */
+    protected $socketName = '';
+
+    /**
+     * Context of socket.
+     *
+     * @var resource
+     */
+    protected $context = null;
+
+
+    /**
      * 当前状态
      * @var int
      */
@@ -86,6 +115,13 @@ class Worker
 
 
     /**
+     * All worker processes pid.
+     * The format is like this [worker_id=>[pid=>pid, pid=>pid, ..], ..]
+     *
+     * @var array
+     */
+    protected static $pidMap = array();
+    /**
      * worker_id 和 进程id 的映射关系
      * 格式 [worker_id=>[0=>$pid, 1=>$pid, ..], ..]
      * @var array
@@ -112,6 +148,22 @@ class Worker
     public $name = 'none';
 
     public $user = '';
+
+
+    /**
+     * Transport layer protocol.
+     *
+     * @var string
+     */
+    public $transport = 'tcp';
+
+
+    /**
+     * reuse port.
+     *
+     * @var bool
+     */
+    public $reusePort = false;
 
     /**
      * 运行
@@ -226,7 +278,6 @@ class Worker
         }
         // 避免SVR4某些情况下情况下进程会再次获得控制终端
         $pid = pcntl_fork();
-        echo $pid;
         // 主进程再次终止运行，最终的子进程会成为Master进程变成
         // daemon程序运行在后台，然后继续fork出Worker进程
         if (-1 === $pid) {
@@ -239,6 +290,7 @@ class Worker
 
     protected static function initWorkers()
     {
+
         foreach (static::$workers as $worker) {
 
             if (empty($worker->name)) {
@@ -254,8 +306,8 @@ class Worker
                 }
             }
 
-
-
+            //socket name
+            
 
         }
     }
@@ -509,6 +561,30 @@ class Worker
         }
 
         return static::$outputStream = $stream;
+    }
+
+
+    public function __construct($socketName = '', array $contextOption = array())
+    {
+        //保存所有的worker实例
+        $this->workerId = spl_object_hash($this);
+        static::$workers[$this->workerId] = $this;
+        static::$pidMap[$this->workerId] = array();
+
+        //socket 上下文
+        if ($socketName) {
+            $this->socketName = $socketName;
+            $contextOption['socket']['backlog'] = $contextOption['socket']['backlog'] ?? self::DEFAULT_BACKLOG;
+            $this->context = stream_context_create($contextOption);
+        }
+
+        //端口复用
+        if (\version_compare(\PHP_VERSION, '7.0.0', 'ge') // if php >= 7.0.0
+            && \strtolower(\php_uname('s')) !== 'darwin' // if not Mac OS
+            && $this->transport !== 'unix') { // if not unix socket
+            $this->reusePort = true;
+        }
+
     }
 
 
