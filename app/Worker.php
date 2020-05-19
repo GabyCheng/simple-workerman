@@ -71,6 +71,48 @@ class Worker
 
 
     /**
+     * Maximum length of the worker names.
+     *
+     * @var int
+     */
+    protected static $_maxWorkerNameLength = 12;
+
+    /**
+     * Maximum length of the socket names.
+     *
+     * @var int
+     */
+    protected static $_maxSocketNameLength = 12;
+    /**
+     * Maximum length of the process user names.
+     *
+     * @var int
+     */
+    protected static $_maxUserNameLength = 12;
+
+    /**
+     * Maximum length of the Proto names.
+     *
+     * @var int
+     */
+    protected static $_maxProtoNameLength = 4;
+
+    /**
+     * Maximum length of the Processes names.
+     *
+     * @var int
+     */
+    protected static $_maxProcessesNameLength = 9;
+
+    /**
+     * Maximum length of the Status names.
+     *
+     * @var int
+     */
+    protected static $_maxStatusNameLength = 1;
+
+
+    /**
      * Socket name. The format is like this http://0.0.0.0:80 .
      *
      * @var string
@@ -89,7 +131,7 @@ class Worker
      * 当前状态
      * @var int
      */
-    protected static $status = self::STATUS_STARTING;
+    protected static $_status = self::STATUS_STARTING;
 
     /**
      * 当前工作进程的状态信息
@@ -115,6 +157,12 @@ class Worker
 
 
     /**
+     * Listening socket
+     * @var resource
+     */
+    protected $mainSocket = null;
+
+    /**
      * All worker processes pid.
      * The format is like this [worker_id=>[pid=>pid, pid=>pid, ..], ..]
      *
@@ -127,6 +175,19 @@ class Worker
      * @var array
      */
     protected static $idMap = array();
+
+
+    /**
+     * PHP built-in protocols.
+     *
+     * @var array
+     */
+    protected static $builtinTransports = array(
+        'tcp' => 'tcp',
+        'udp' => 'udp',
+        'unix' => 'unix',
+        'ssl' => 'tcp',
+    );
 
 
     /**
@@ -164,6 +225,27 @@ class Worker
      * @var bool
      */
     public $reusePort = false;
+
+
+    /**
+     * Get UI columns to be shown in terminal
+     * 暂时没搞懂，先抄过来
+     * 1. $column_map: array('ui_column_name' => 'clas_property_name')
+     * 2. Consider move into configuration in future
+     *
+     * @return array
+     */
+    public static function getUiColumns()
+    {
+        return array(
+            'proto' => 'transport',
+            'user' => 'user',
+            'worker' => 'name',
+            'socket' => 'socket',
+            'processes' => 'count',
+            'status' => 'status',
+        );
+    }
 
     /**
      * 运行
@@ -237,7 +319,7 @@ class Worker
             chmod($logFile, 0622);
         }
 
-        static::$status = self::STATUS_STARTING;
+        static::$_status = self::STATUS_STARTING;
         static::$globalStatistics['start_timestamp'] = time();
         //sys_get_temp_dir返回临时文件的目录
         static::$statisticsFile = sys_get_temp_dir() . "/$uniquePrefix.status";
@@ -307,9 +389,76 @@ class Worker
             }
 
             //socket name
-            
+            $worker->socket = $worker->getSocketName();
+
+
+            $worker->status = '<g> [OK] </g>';
+            //得到这些列的长度。。。暂时不知道做什么的
+            foreach (static::getUiColumns() as $columnName => $prop) {
+                !isset($worker->{$prop}) && $worker->{$prop} = 'NNNN';
+                $propLength = strlen($worker->{$prop});
+                $key = '_max' . ucfirst(strtolower($columnName)) . 'NameLength';
+                static::$$key = max(static::$$key, $propLength);
+            }
+
+            //没有开启端口复用，监听
+            if (!$worker->reusePort) {
+
+            }
 
         }
+    }
+
+
+    /**
+     * Listen
+     *
+     */
+    public function listen()
+    {
+        if (!$this->socketName) {
+            return;
+        }
+
+        if ($this->mainSocket) {
+
+
+        }
+
+
+    }
+
+
+    /**
+     * 解析本地socket地址
+     * @throws \Exception
+     */
+    protected function parseSocketAddress()
+    {
+        if (!$this->socketName) {
+            return;
+        }
+        //Get the application layer communication protocol and listening address
+        list($scheme, $address) = explode(':', $this->socketName, 2);
+
+        if (!isset(static::$builtinTransports[$scheme])) {
+
+        } else {
+            $this->transport = $scheme;
+        }
+
+        return static::$builtinTransports[$this->transport] . ":" . $address;
+    }
+
+
+    /**
+     * get socket name
+     * @return string
+     */
+    public function getSocketName()
+    {
+        //lcfirst 第一个字母为小写
+        return $this->socketName ? lcfirst($this->socketName) : 'none';
     }
 
     /**
@@ -318,8 +467,8 @@ class Worker
      */
     protected static function getCurrentUser()
     {
-        $user_info = posix_getpwuid(posix_getuid());
-        return $user_info['name'];
+        $userInfo = posix_getpwuid(posix_getuid());
+        return $userInfo['name'];
     }
 
 
@@ -575,6 +724,7 @@ class Worker
         if ($socketName) {
             $this->socketName = $socketName;
             $contextOption['socket']['backlog'] = $contextOption['socket']['backlog'] ?? self::DEFAULT_BACKLOG;
+            //创建并返回一个文本数据流并应用各种选项，可用于fopen(),file_get_contents()等过程的超时设置、代理服务器、请求方式、头信息设置的特殊过程。
             $this->context = stream_context_create($contextOption);
         }
 
