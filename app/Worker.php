@@ -208,12 +208,21 @@ class Worker
      */
     public $name = 'none';
 
+    /**
+     * @var string
+     */
     public $user = '';
 
 
     /**
+     * 应用层协议
+     * @var string
+     */
+    public $protocol = null;
+
+    /**
      * Transport layer protocol.
-     *
+     * 传输层协议
      * @var string
      */
     public $transport = 'tcp';
@@ -403,7 +412,7 @@ class Worker
 
             //没有开启端口复用，监听
             if (!$worker->reusePort) {
-
+                $worker->listen();
             }
 
         }
@@ -413,6 +422,7 @@ class Worker
     /**
      * Listen
      *
+     * @throws \Exception
      */
     public function listen()
     {
@@ -420,8 +430,21 @@ class Worker
             return;
         }
 
-        if ($this->mainSocket) {
+        if (!$this->mainSocket) {
+            //tcp://0.0.0.0:2000
+            $localSocket = $this->parseSocketAddress();
 
+            //Flag
+            $flags = $this->transport === 'udp' ? STREAM_SERVER_BIND : STREAM_SERVER_BIND | STREAM_SERVER_LISTEN;
+            $errno = 0;
+            $errMsg = '';
+            //SO_REUSEPORT
+            if ($this->reusePort) {
+                //设置socket协议
+                stream_context_set_option($this->context, 'socket', 'so_reuseport', 1);
+            }
+
+            //创建Internet或Unix域服务器套接字
 
         }
 
@@ -439,9 +462,21 @@ class Worker
             return;
         }
         //Get the application layer communication protocol and listening address
+        //websocket ://0.0.0.0:2000
         list($scheme, $address) = explode(':', $this->socketName, 2);
-
         if (!isset(static::$builtinTransports[$scheme])) {
+            $scheme = ucfirst($scheme);
+            $this->protocol = substr($scheme, 0, 1) === '\\' ? $scheme : '\\Protocols\\' . $scheme;
+            //判断自定义协议是否存在
+            if (!class_exists($this->protocol)) {
+                $this->protocol = "\\app\\Protocols\\$scheme";
+                if (!class_exists($this->protocol)) {
+                    throw new \Exception("class {$this->protocol} not exist");
+                }
+            }
+            if (!isset(static::$builtinTransports[$this->transport])) {
+                throw new \Exception('Bad worker->transport' . var_export($this->transport, true));
+            }
 
         } else {
             $this->transport = $scheme;
@@ -725,6 +760,8 @@ class Worker
             $this->socketName = $socketName;
             $contextOption['socket']['backlog'] = $contextOption['socket']['backlog'] ?? self::DEFAULT_BACKLOG;
             //创建并返回一个文本数据流并应用各种选项，可用于fopen(),file_get_contents()等过程的超时设置、代理服务器、请求方式、头信息设置的特殊过程。
+            //stream系其实就是PHP中流的概念，流对各种协议都做了一层抽象封装，比如[ http:// ]、[ file:// ]、[ ftp:// ]、[ php://input ]等等，
+            //也就说流系列函数提供了统一的函数来处理各种各样的花式协议。
             $this->context = stream_context_create($contextOption);
         }
 
