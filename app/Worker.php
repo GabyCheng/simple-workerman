@@ -157,6 +157,14 @@ class Worker
 
 
     /**
+     * The PID of master process.
+     *
+     * @var int
+     */
+    protected static $masterPid = 0;
+
+
+    /**
      * Listening socket
      * @var resource
      */
@@ -280,11 +288,27 @@ class Worker
         static::daemonize();
         //初始化workers
         static::initWorkers();
-        //安装信号啊
-
+        //安装信号
+        //static::installSignal();
+        //保存master pid
+        static::saveMasterPid();
         //解锁
         static::unlock();
 
+    }
+
+
+    /**
+     * Save pid.
+     *
+     * @throws \Exception
+     */
+    protected static function saveMasterPid()
+    {
+        static::$masterPid = posix_getpid();
+        if (false === \file_put_contents(static::$pidFile, static::$masterPid)) {
+            throw new Exception('can not save pid to ' . static::$pidFile);
+        }
     }
 
     /**
@@ -573,7 +597,7 @@ class Worker
      */
     public function signalHandler($signal)
     {
-        
+
     }
 
     /**
