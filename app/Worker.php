@@ -294,7 +294,13 @@ class Worker
         static::saveMasterPid();
         //解锁
         static::unlock();
+        //展示连接情况,不重要先不写
+        static::displayUI();
 
+    }
+
+    protected static function displayUI()
+    {
     }
 
 
@@ -513,10 +519,11 @@ class Worker
                 socket_set_option($socket, SOL_TCP, TCP_NODELAY, 1);
                 restore_error_handler();
             }
-            // Non blocking.
+            // 设置非阻塞
             \stream_set_blocking($this->mainSocket, false);
         }
 
+        //接收连接
         $this->resumeAccept();
     }
 
