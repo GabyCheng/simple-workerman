@@ -568,6 +568,15 @@ class Worker
 
 
     /**
+     * 信号回调
+     * @param $signal
+     */
+    public function signalHandler($signal)
+    {
+        
+    }
+
+    /**
      * get socket name
      * @return string
      */
