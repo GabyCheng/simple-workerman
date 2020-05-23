@@ -281,7 +281,7 @@ class Worker
         //初始化workers
         static::initWorkers();
         //安装信号啊
-        
+
         //解锁
         static::unlock();
 
@@ -387,6 +387,11 @@ class Worker
 
     }
 
+
+    /**
+     * 初始化worker实例
+     * @throws \Exception
+     */
     protected static function initWorkers()
     {
 
@@ -475,7 +480,11 @@ class Worker
             if (function_exists('socket_import_stream') && static::$builtinTransports[$this->transport] === 'tcp') {
                 set_error_handler(function () {
                 });
-                $socket = socket_set_option($this->mainSocket);
+                //将stream_socket对象转为socket对象，先用stream可能是为了减少繁琐的创建监听绑定吧。
+                //stream_socket与sockets相比有个缺点，无法精确设置socket选项。当需要设置stream_socket选项时，
+                //可以通过http://php.net/manual/en/function.socket-import-stream.php将stream_socket转换成扩展的sockets，
+                //然后就可以通过http://php.net/manual/en/function.socket-set-option.php设置stream_socket的socket选项了。
+                $socket = socket_import_stream($this->mainSocket);
                 socket_set_option($socket, SOL_SOCKET, SO_KEEPALIVE, 1);
                 socket_set_option($socket, SOL_TCP, TCP_NODELAY, 1);
                 restore_error_handler();
@@ -530,6 +539,31 @@ class Worker
         }
 
         return static::$builtinTransports[$this->transport] . ":" . $address;
+    }
+
+
+    /**
+     * Install signal handler.
+     *
+     * @return void
+     */
+    protected static function installSignal()
+    {
+        $signalHandler = '\app\Worker::signalHandler';
+        // stop
+        \pcntl_signal(\SIGINT, $signalHandler, false);
+        // graceful stop
+        \pcntl_signal(\SIGTERM, $signalHandler, false);
+        // reload
+        \pcntl_signal(\SIGUSR1, $signalHandler, false);
+        // graceful reload
+        \pcntl_signal(\SIGQUIT, $signalHandler, false);
+        // status
+        \pcntl_signal(\SIGUSR2, $signalHandler, false);
+        // connection status
+        \pcntl_signal(\SIGIO, $signalHandler, false);
+        // ignore
+        \pcntl_signal(\SIGPIPE, \SIG_IGN, false);
     }
 
 
