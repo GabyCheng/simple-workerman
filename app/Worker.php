@@ -235,6 +235,12 @@ class Worker
      */
     public $reusePort = false;
 
+    /**
+     * Unix group of processes, needs appropriate privileges (usually root).
+     * @var string
+     */
+    public $group = '';
+
 
     /**
      * Get UI columns to be shown in terminal
@@ -274,6 +280,8 @@ class Worker
         static::daemonize();
         //初始化workers
         static::initWorkers();
+        //安装信号啊
+        
         //解锁
         static::unlock();
 
@@ -445,9 +453,48 @@ class Worker
             }
 
             //创建Internet或Unix域服务器套接字
+            //由于创建一个SOCKET的流程总是 socket、bind、listen，所以PHP提供了一个非常方便的函数一次性创建、绑定端口、监听端口
+            $this->mainSocket = stream_socket_server($localSocket, $errno, $errMsg, $flags, $this->context);
+            if (!$this->mainSocket) {
+                throw new \Exception($errMsg);
+            }
 
+            if ($this->transport === 'ssl') {
+                //在已连接的套接字上打开/关闭加密
+                stream_socket_enable_crypto($this->mainSocket, false);
+            } elseif ($this->transport === 'unix') {
+                $socketFile = substr($localSocket, 7);
+                if ($this->user) {
+                    chown($socketFile, $this->user);
+                }
+                if ($this->group) {
+                    chgrp($socketFile, $this->group);
+                }
+            }
+
+            if (function_exists('socket_import_stream') && static::$builtinTransports[$this->transport] === 'tcp') {
+                set_error_handler(function () {
+                });
+                $socket = socket_set_option($this->mainSocket);
+                socket_set_option($socket, SOL_SOCKET, SO_KEEPALIVE, 1);
+                socket_set_option($socket, SOL_TCP, TCP_NODELAY, 1);
+                restore_error_handler();
+            }
+            // Non blocking.
+            \stream_set_blocking($this->mainSocket, false);
         }
 
+        $this->resumeAccept();
+    }
+
+
+    /**
+     * 接受新的连接
+     * @return void
+     */
+
+    public function resumeAccept()
+    {
 
     }
 
