@@ -296,12 +296,118 @@ class Worker
         static::unlock();
         //展示连接情况,不重要先不写
         static::displayUI();
+        //字如其名，fork worker 进程
+        static::forkWorkers();
+    }
+
+
+    /**
+     * Display staring UI.
+     *
+     * @return void
+     */
+    protected static function displayUI()
+    {
 
     }
 
-    protected static function displayUI()
+
+    /**
+     * Fork some worker processes.
+     *
+     * @return void
+     */
+    protected static function forkWorkers()
     {
-        
+        //Array
+        //(
+        //    [000000006b0156170000000009fc0bd0] => app\Worker Object
+        //        (
+        //            [count] => 1
+        //            [autoloadRootPath:protected] =>
+        //            [socketName:protected] => websocket://0.0.0.0:2000
+        //            [context:protected] => Resource id #10
+        //            [mainSocket:protected] => Resource id #17
+        //            [name] => none
+        //            [user] => chengjiebin
+        //            [protocol] => \app\Protocols\Websocket
+        //            [transport] => tcp
+        //            [reusePort] =>
+        //            [group] =>
+        //            [workerId] => 000000006b0156170000000009fc0bd0
+        //            [socket] => websocket://0.0.0.0:2000
+        //            [status] => <g> [OK] </g>
+        //        )
+        //
+        //)
+        //print_r(static::$workers);
+        foreach (static::$workers as $worker) {
+            if (static::$_status === static::STATUS_STARTING) {
+                if (empty($worker->name)) {
+                    $worker->name = $worker->getSocketName();
+                }
+                $workerNameLength = strlen($worker->name);
+                if (static::$_maxWorkerNameLength < $workerNameLength) {
+                    static::$_maxWorkerNameLength = $workerNameLength;
+                }
+            }
+            //while (count(static::$pidMap[$worker->workerId]) < $worker->count) {
+            static::forkOneWorker($worker);
+            //}
+        }
+
+    }
+
+    /**
+     * Fork one worker process.
+     *
+     * @param \app\Worker $worker
+     * @throws Exception
+     */
+    protected static function forkOneWorker(self $worker)
+    {
+        //获取可用的worker id
+        //Array
+        //(
+        //    [000000006b0156170000000009fc0bd0] => Array
+        //        (
+        //            [0] => 0
+        //        )
+        //
+        //)
+        //print_r(static::$idMap);
+
+        //Array
+        //(
+        //    [000000006b0156170000000009fc0bd0] => Array
+        //        (
+        //        )
+        //
+        //)
+        //
+        //print_r(static::$pidMap);
+        $id = static::getId($worker->workerId, 0);
+        if ($id === false) {
+            return;
+        }
+        $pid = pcntl_fork();
+        //父进程
+        if ($pid > 0) {
+            static::$pidMap[$worker->workerId][$pid] = $pid;
+            static::$idMap[$worker->workerId][$id] = $pid;
+        } elseif (0 === $pid) {//子进程
+            //随机数
+            srand();
+            mt_srand();
+        } else {
+            new Exception("forkOneWorker fail");
+        }
+
+    }
+
+    protected static function getId($workerId, $pid)
+    {
+        return array_search($pid, static::$idMap[$workerId]);
     }
 
 
