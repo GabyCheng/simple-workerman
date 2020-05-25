@@ -223,10 +223,25 @@ class Worker
 
 
     /**
+     * Stdout file.
+     *
+     * @var string
+     */
+    public static $stdoutFile = '/dev/null';
+
+
+    /**
      * 应用层协议
      * @var string
      */
     public $protocol = null;
+
+    /**
+     * Worker id.
+     *
+     * @var int
+     */
+    public $id = 0;
 
     /**
      * Transport layer protocol.
@@ -316,6 +331,7 @@ class Worker
      * Fork some worker processes.
      *
      * @return void
+     * @throws \Exception
      */
     protected static function forkWorkers()
     {
@@ -351,9 +367,9 @@ class Worker
                     static::$_maxWorkerNameLength = $workerNameLength;
                 }
             }
-            //while (count(static::$pidMap[$worker->workerId]) < $worker->count) {
-            static::forkOneWorker($worker);
-            //}
+            while (count(static::$pidMap[$worker->workerId]) < $worker->count) {
+                static::forkOneWorker($worker);
+            }
         }
 
     }
@@ -361,8 +377,8 @@ class Worker
     /**
      * Fork one worker process.
      *
-     * @param \app\Worker $worker
-     * @throws Exception
+     * @param self $worker
+     * @throws \Exception
      */
     protected static function forkOneWorker(self $worker)
     {
@@ -399,15 +415,149 @@ class Worker
             //随机数
             srand();
             mt_srand();
+            //端口复用。子进程也需要用到
+            if ($worker->reusePort) {
+                $worker->listen();
+            }
+            static::$pidMap = array();
+            //重定向标准输出
+            if (static::$_status === static::STATUS_STARTING) {
+                static::resetStd();
+            }
+
+            //移除其他的监听
+            foreach (static::$workers as $key => $oneWorker) {
+                if ($oneWorker->workerId !== $worker) {
+                    //搞不懂这里先不写
+                }
+            }
+
+            //删除定时器，搞不懂。后面再写
+
+            //设置进程名称
+            static::setProcessTitle(self::$processTitle . ':worker process' . $worker->name . '' . $worker->getSocketName());
+
+            //设置用户和用户组
+            $worker->setUserAndGroup();
+
+            $worker->id = $id;
+
+            //
+            $err = new \Exception('event-loop exited');
+            static::log($err);
+            //异常退出
+            exit(250);
         } else {
-            new Exception("forkOneWorker fail");
+            new \Exception("forkOneWorker fail");
         }
 
     }
 
+    /**
+     * @param $workerId
+     * @param $pid
+     * @return int
+     */
     protected static function getId($workerId, $pid)
     {
         return array_search($pid, static::$idMap[$workerId]);
+    }
+
+
+    /**
+     * Set unix user and group for current process.
+     *
+     * @return void
+     */
+    public function setUserAndGroup()
+    {
+        //get uid
+        $userInfo = posix_getpwnam($this->user);
+        if (!$userInfo) {
+            static::log("Warning: User {$this->user} not exists");
+            return;
+        }
+
+        $uid = $userInfo['uid'];
+        if ($this->group) {
+            $groupInfo = posix_getgrnam($this->group);
+            if (!$groupInfo) {
+                static::log("Warning: Group {$this->group} not exists");
+                return;
+            }
+            $gid = $groupInfo['gid'];
+
+        } else {
+            $gid = $userInfo['gid'];
+        }
+
+        if ($uid !== posix_getuid() || $gid !== posix_getgrgid()) {
+            if (!posix_setgid($gid) || !posix_initgroups($userInfo['name'], $gid) || posix_setuid($uid)) {
+                static::log("Warning: change gid or uid fail.");
+            }
+        }
+
+    }
+
+    /**
+     * unListen.
+     *
+     * @return void
+     */
+    public function unListen()
+    {
+
+    }
+
+    public static function delAll()
+    {
+        //下面定了一个5秒后的闹铃信号，并捕捉。
+        //pcntl_signal(SIGALRM, function () {
+        //    echo 'Received an alarm signal !' . PHP_EOL;
+        //}, false);
+        //
+        //pcntl_alarm(5);
+        //
+        //while (true) {
+        //    pcntl_signal_dispatch();
+        //    sleep(1);
+        //}
+
+
+    }
+
+
+    /**
+     * 重定向标准输出和输入
+     *
+     * @throws \Exception
+     */
+    public static function resetStd()
+    {
+        if (!static::$daemonize) {
+            return;
+        }
+
+        global $STDOUT, $STDERR;
+        $handle = fopen(static::$stdoutFile, "a");
+        if ($handle) {
+            unset($handle);
+            set_error_handler(function () {
+            });
+            fclose($STDOUT);
+            fclose($STDERR);
+            fclose(\STDOUT);
+            fclose(\STDERR);
+            $STDOUT = fopen(static::$stdoutFile, "a");
+            $STDERR = fopen(static::$stdoutFile, "a");
+            //修改输出流
+            static::$outputStream = null;
+            static::outputStream($STDOUT);
+            restore_error_handler();
+            return;
+        }
+
+        throw new \Exception('Can not open stdoutFile' . static::$stdoutFile);
     }
 
 

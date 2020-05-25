@@ -63,3 +63,11 @@
 2020-05-24 13:39:54pid27252Workerman[index.php] start in DEBUG mode
 2020-05-24 13:42:14pid27350Workerman[index.php] start in DEBUG mode
 2020-05-24 13:42:55pid27366Workerman[index.php] start in DEBUG mode
+2020-05-25 12:12:44pid28039Workerman[index.php] start in DEBUG mode
+2020-05-25 12:12:44pid28042Warning: change gid or uid fail.
+2020-05-25 12:12:44pid28042Exception: event-loop exited in /Users/chengjiebin/www/simple-workerman/app/Worker.php:445
+Stack trace:
+#0 /Users/chengjiebin/www/simple-workerman/app/Worker.php(370): app\Worker::forkOneWorker(Object(app\Worker))
+#1 /Users/chengjiebin/www/simple-workerman/app/Worker.php(315): app\Worker::forkWorkers()
+#2 /Users/chengjiebin/www/simple-workerman/index.php(14): app\Worker::runAll()
+#3 {main}
