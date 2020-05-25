@@ -3,6 +3,7 @@
 namespace app;
 
 use mysql_xdevapi\Exception;
+use Workerman\Events\EventInterface;
 
 require_once __DIR__ . '/Lib/Constants.php';
 
@@ -197,6 +198,11 @@ class Worker
         'ssl' => 'tcp',
     );
 
+    protected static $availableEventLoops = array(
+        'libevent' => '\app\Events\Libevent',
+        'event' => '\app\Events\Event',
+    );
+
 
     /**
      * 这个文件存储master进程id
@@ -266,6 +272,13 @@ class Worker
 
 
     /**
+     * EventLoopClass
+     * @var string
+     */
+    public static $eventLoopClass = '';
+
+
+    /**
      * Get UI columns to be shown in terminal
      * 暂时没搞懂，先抄过来
      * 1. $column_map: array('ui_column_name' => 'clas_property_name')
@@ -285,8 +298,17 @@ class Worker
         );
     }
 
+
+    /**
+     * Global event loop.
+     *
+     * @var Events\EventInterface
+     */
+    public static $globalEvent = null;
+
     /**
      * 运行
+     * @throws \Exception
      */
 
     public static function runAll()
@@ -415,7 +437,7 @@ class Worker
             //随机数
             srand();
             mt_srand();
-            //端口复用。子进程也需要用到
+            // 这里是socket部分，如果端口复用，就直接listen
             if ($worker->reusePort) {
                 $worker->listen();
             }
@@ -432,7 +454,7 @@ class Worker
                 }
             }
 
-            //删除定时器，搞不懂。后面再写
+            //删除原先的定时器，搞不懂。后面再写
 
             //设置进程名称
             static::setProcessTitle(self::$processTitle . ':worker process' . $worker->name . '' . $worker->getSocketName());
@@ -443,6 +465,7 @@ class Worker
             $worker->id = $id;
 
             //
+            $worker->run();
             $err = new \Exception('event-loop exited');
             static::log($err);
             //异常退出
@@ -512,6 +535,7 @@ class Worker
     public static function delAll()
     {
         //下面定了一个5秒后的闹铃信号，并捕捉。
+        //如果seconds设置为0,将不会创建alarm信号。
         //pcntl_signal(SIGALRM, function () {
         //    echo 'Received an alarm signal !' . PHP_EOL;
         //}, false);
@@ -522,6 +546,53 @@ class Worker
         //    pcntl_signal_dispatch();
         //    sleep(1);
         //}
+
+
+    }
+
+    public function run()
+    {
+        //更新进程的状态
+        static::$_status = static::STATUS_STARTING;
+
+        //可以在终止脚本前回调
+        register_shutdown_function(array("\\app\\Worker", 'checkErrors'));
+
+        // Create a global event loop.
+        if (!static::$globalEvent) {
+            $eventLoopClass = static::getEventLoopName();
+            static::$globalEvent = new $eventLoopClass;
+            $this->resumeAccept();
+        }
+
+
+    }
+
+    public static function checkErrors()
+    {
+
+    }
+
+    protected static function getEventLoopName()
+    {
+        if (static::$eventLoopClass) {
+            return static::$eventLoopClass;
+        }
+
+        $loopName = '';
+
+        foreach (static::$availableEventLoops as $name => $class) {
+            //优先加载第一个
+            if (extension_loaded($name)) {
+                $loopName = $name;
+                break;
+            }
+        }
+
+        if ($loopName) {
+            //这里循环渐进，先用libevent库
+            static::$eventLoopClass = static::$availableEventLoops[$loopName];
+        }
 
 
     }
