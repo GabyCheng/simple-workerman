@@ -2,8 +2,7 @@
 
 namespace app;
 
-use mysql_xdevapi\Exception;
-use Workerman\Events\EventInterface;
+use app\Events\EventInterface;
 
 require_once __DIR__ . '/Lib/Constants.php';
 
@@ -63,6 +62,12 @@ class Worker
      * @var string
      */
     protected static $startFile = '';
+
+    /**
+     * 暂停是否接受新连接
+     * @var bool
+     */
+    protected $pauseAccept = true;
 
     /**
      * 加载的文件路径
@@ -248,6 +253,38 @@ class Worker
      * @var int
      */
     public $id = 0;
+
+    /**
+     * 成功建立套接字连接
+     * @var callable
+     */
+    public $onConnect = null;
+
+    /**
+     * 接收数据触发
+     * @var callable
+     */
+    public $onMessage = null;
+
+    /**
+     * worker 进程开启触发
+     * @var callable
+     */
+    public $onWorkerStart = null;
+
+    /**
+     * 断开连接触发
+     * @var callable
+     */
+    public $onClose = null;
+
+
+    /**
+     * 连接发生错误
+     * @var callable
+     */
+    public $onError = null;
+
 
     /**
      * Transport layer protocol.
@@ -449,8 +486,10 @@ class Worker
 
             //移除其他的监听
             foreach (static::$workers as $key => $oneWorker) {
-                if ($oneWorker->workerId !== $worker) {
+                if ($oneWorker->workerId !== $worker->id) {
                     //搞不懂这里先不写
+                    $oneWorker->unListen();
+                    unset(static::$workers[$key]);
                 }
             }
 
@@ -564,7 +603,66 @@ class Worker
             static::$globalEvent = new $eventLoopClass;
             $this->resumeAccept();
         }
+        //Reinstall signal
+        static::reinstallSignal();
+        //init Timer
+        Timer::init(static::$globalEvent);
 
+        //set an empty onMessage callback
+        if (empty($this->onMessage)) {
+            $this->onMessage = function () {
+            };
+        }
+        //还原之前的错误处理函数，重置set handler
+        restore_error_handler();
+
+        if ($this->onWorkerStart) {
+            try {
+                call_user_func($this->onWorkerStart, $this);
+            } catch (\Exception $e) {
+                static::log($e);
+                sleep(1);
+                exit(250);
+            } catch (\Error $e) {
+                static::log($e);
+                sleep(1);
+                exit(250);
+            }
+        }
+        static::$globalEvent->loop();
+    }
+
+    /**
+     * 重新安装信号
+     * @return void
+     */
+    public static function reinstallSignal()
+    {
+        $signalHandler = '\Workerman\Worker::signalHandler';
+        // uninstall stop signal handler
+        \pcntl_signal(\SIGINT, \SIG_IGN, false);
+        // uninstall graceful stop signal handler
+        \pcntl_signal(\SIGTERM, \SIG_IGN, false);
+        // uninstall reload signal handler
+        \pcntl_signal(\SIGUSR1, \SIG_IGN, false);
+        // uninstall graceful reload signal handler
+        \pcntl_signal(\SIGQUIT, \SIG_IGN, false);
+        // uninstall status signal handler
+        \pcntl_signal(\SIGUSR2, \SIG_IGN, false);
+        // uninstall connections status signal handler
+        \pcntl_signal(\SIGIO, \SIG_IGN, false);
+        // reinstall stop signal handler
+        static::$globalEvent->add(\SIGINT, EventInterface::EV_SIGNAL, $signalHandler);
+        // reinstall graceful stop signal handler
+        static::$globalEvent->add(\SIGTERM, EventInterface::EV_SIGNAL, $signalHandler);
+        // reinstall reload signal handler
+        static::$globalEvent->add(\SIGUSR1, EventInterface::EV_SIGNAL, $signalHandler);
+        // reinstall graceful reload signal handler
+        static::$globalEvent->add(\SIGQUIT, EventInterface::EV_SIGNAL, $signalHandler);
+        // reinstall status signal handler
+        static::$globalEvent->add(\SIGUSR2, EventInterface::EV_SIGNAL, $signalHandler);
+        // reinstall connection status signal handler
+        static::$globalEvent->add(\SIGIO, EventInterface::EV_SIGNAL, $signalHandler);
 
     }
 
@@ -863,6 +961,34 @@ class Worker
 
     public function resumeAccept()
     {
+        if (static::$globalEvent && true === $this->pauseAccept && $this->mainSocket) {
+            if ($this->transport !== 'udp') {
+                static::$globalEvent->add($this->mainSocket, EventInterface::EV_READ, array($this, 'acceptConnection'));
+            }
+//            $this->pauseAccept = false;
+        }
+
+    }
+
+    /**
+     * accept a connection
+     * @param resource $socket
+     * @return void
+     */
+    public function acceptConnection($socket)
+    {
+        set_error_handler(function () {
+        });
+        $newSocket = stream_socket_accept($socket);
+        restore_error_handler();
+
+        if (!$newSocket) {
+            return;
+        }
+
+        //TcpConnection
+
+
 
     }
 
