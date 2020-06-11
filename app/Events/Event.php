@@ -82,9 +82,11 @@ class Event implements EventInterface
             default:
                 $fdKey = (int)$fd;
                 $realFlag = $flag === self::EV_READ ? $className::READ | $className::PERSIST : $className::WRITE | $className::PERSIST;
+                Worker::log($realFlag);
                 $event = new $className($this->eventBase, $fd, $realFlag, $func, $fd);
 
                 if (!$event || !$event->add()) {
+                    Worker::log('eeeeeeeeeeeee');
                     return false;
                 }
                 $this->allEvent[$fdKey][$flag] = $event;

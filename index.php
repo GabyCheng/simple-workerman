@@ -9,5 +9,7 @@ define('_ROOT', dirname(__FILE__) . DIRECTORY_SEPARATOR);
 require _ROOT . 'vendor/autoload.php';
 
 
-//new \app\Worker("websocket://0.0.0.0:2000");
-//\app\Worker::runAll();
+new \app\Worker("websocket://0.0.0.0:8080");
+\app\Worker::runAll();
+
+

@@ -2,6 +2,7 @@
 
 namespace app;
 
+use app\Connection\TcpConnection;
 use app\Events\EventInterface;
 
 require_once __DIR__ . '/Lib/Constants.php';
@@ -74,6 +75,12 @@ class Worker
      * @var string
      */
     protected $autoloadRootPath = '';
+
+    /**
+     * store all connection of clients.
+     * @var array
+     */
+    public $connections = array();
 
 
     /**
@@ -370,8 +377,10 @@ class Worker
         static::unlock();
         //展示连接情况,不重要先不写
         static::displayUI();
+
         //字如其名，fork worker 进程
         static::forkWorkers();
+
     }
 
 
@@ -415,7 +424,7 @@ class Worker
         //        )
         //
         //)
-        //print_r(static::$workers);
+
         foreach (static::$workers as $worker) {
             if (static::$_status === static::STATUS_STARTING) {
                 if (empty($worker->name)) {
@@ -426,6 +435,7 @@ class Worker
                     static::$_maxWorkerNameLength = $workerNameLength;
                 }
             }
+
             while (count(static::$pidMap[$worker->workerId]) < $worker->count) {
                 static::forkOneWorker($worker);
             }
@@ -502,7 +512,6 @@ class Worker
             $worker->setUserAndGroup();
 
             $worker->id = $id;
-
             //
             $worker->run();
             $err = new \Exception('event-loop exited');
@@ -553,7 +562,7 @@ class Worker
             $gid = $userInfo['gid'];
         }
 
-        if ($uid !== posix_getuid() || $gid !== posix_getgrgid()) {
+        if ($uid !== posix_getuid() || $gid !== posix_getgid()) {
             if (!posix_setgid($gid) || !posix_initgroups($userInfo['name'], $gid) || posix_setuid($uid)) {
                 static::log("Warning: change gid or uid fail.");
             }
@@ -600,9 +609,12 @@ class Worker
         // Create a global event loop.
         if (!static::$globalEvent) {
             $eventLoopClass = static::getEventLoopName();
+            Worker::log($eventLoopClass);
             static::$globalEvent = new $eventLoopClass;
             $this->resumeAccept();
         }
+
+
         //Reinstall signal
         static::reinstallSignal();
         //init Timer
@@ -629,6 +641,7 @@ class Worker
                 exit(250);
             }
         }
+
         static::$globalEvent->loop();
     }
 
@@ -692,7 +705,7 @@ class Worker
             static::$eventLoopClass = static::$availableEventLoops[$loopName];
         }
 
-
+        return static::$eventLoopClass;
     }
 
 
@@ -811,7 +824,6 @@ class Worker
     protected static function daemonize()
     {
         //守护进程即是让当前进程脱离终端控制，否则终端关闭进程也关闭了
-        static::$daemonize = 1;
         if (!static::$daemonize) {
             return;
         }
@@ -979,7 +991,7 @@ class Worker
     {
         set_error_handler(function () {
         });
-        $newSocket = stream_socket_accept($socket);
+        $newSocket = stream_socket_accept($socket, 0, $remoteAddress);
         restore_error_handler();
 
         if (!$newSocket) {
@@ -987,8 +999,14 @@ class Worker
         }
 
         //TcpConnection
+        $connection = new TcpConnection($newSocket, $remoteAddress);
+        $this->connections[$connection->id] = $connection;
+        $connection->worker = $this;
 
-
+        $connection->onMessage = $this->onMessage;
+        if ($this->onConnect) {
+            call_user_func($this->onConnect, $connection);
+        }
 
     }
 
@@ -1208,9 +1226,9 @@ class Worker
     public static function log($msg)
     {
         $msg = $msg . "\n";
-        if (!static::$daemonize) {
-            static::safeEcho($msg);
-        }
+//        if (!static::$daemonize) {
+//            static::safeEcho($msg);
+//        }
         //守护进程
         $file = (string)static::$logFile;
         $data = date('Y-m-d H:i:s') . '' . 'pid' . posix_getpid() . $msg;

@@ -37,13 +37,58 @@ abstract class ConnectionInterface
 
 
     /**
-     * @param $sendBuffer
-     * @return mixed|boolean
-     */
-    abstract public function send($sendBuffer);
-
-
-    abstract public function getRemoteIp();
-
-
+//     * @param $sendBuffer
+//     * @return mixed|boolean
+//     */
+//    abstract public function send($sendBuffer);
+//
+//    /**
+//     * get remote ip
+//     * @return string
+//     */
+//    abstract public function getRemoteIp();
+//
+//    /**
+//     * get remote port
+//     * @return int
+//     */
+//    abstract public function getRemotePort();
+//
+//    /**
+//     * get local ip
+//     * @return string
+//     */
+//    abstract public function getLocalIp();
+//
+//    /**
+//     * get local ip
+//     * @return int
+//     */
+//    abstract public function getLocalPort();
+//
+//    /**
+//     * get local address
+//     * @return string
+//     */
+//    abstract public function getLocalAddress();
+//
+//    /**
+//     * is ipv4
+//     * @return bool
+//     */
+//    abstract public function isIPv4();
+//
+//    /**
+//     * is ipv6
+//     * @return bool
+//     */
+//    abstract public function isIpv6();
+//
+//    /**
+//     * close connection
+//     * @param $data
+//     * @return void
+//     */
+//    abstract public function close($data = null);
+//
 }
