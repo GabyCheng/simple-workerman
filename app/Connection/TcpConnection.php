@@ -89,7 +89,7 @@ class TcpConnection extends ConnectionInterface
      * id recorder
      * @var int
      */
-    protected static $_idRecorder = 1;
+    protected static $idRecorder = 1;
 
 
     /**
@@ -149,6 +149,13 @@ class TcpConnection extends ConnectionInterface
      */
     public $bytesRead = 0;
 
+    /**
+     * Application layer protocol.
+     * the format is like app\\protocols\\Http
+     * @var \app\Protocols\Websocket
+     */
+    public $protocol = null;
+
 
     /**
      * TcpConnection constructor.
@@ -158,9 +165,9 @@ class TcpConnection extends ConnectionInterface
     public function __construct($socket, $remoteAddress = '')
     {
         ++self::$statistics['connection_count'];
-        $this->id = $this->_id = self::$_idRecorder++;
-        if (self::$_idRecorder === PHP_INT_MAX) {
-            self::$_idRecorder = 0;
+        $this->id = $this->_id = self::$idRecorder++;
+        if (self::$idRecorder === PHP_INT_MAX) {
+            self::$idRecorder = 0;
         }
 
         $this->socket = $socket;
@@ -170,7 +177,7 @@ class TcpConnection extends ConnectionInterface
             stream_set_read_buffer($this->socket, 0);
         }
         Worker::log($socket);
-        Worker::$globalEvent->add($this->socket, EventInterface::EV_WRITE, array($this, 'baseWrite'));
+        Worker::$globalEvent->add($this->socket, EventInterface::EV_WRITE, array($this, 'baseRead'));
         $this->maxSendBufferSize = self::$defaultMaxSendBufferSize;
         $this->maxPackageSize = self::$defaultMaxPackageSize;
         $this->remoteAddress = $remoteAddress;
@@ -191,9 +198,7 @@ class TcpConnection extends ConnectionInterface
         try {
             $buffer = @fread($socket, self::READ_BUFFER_SIZE);
         } catch (\Exception $e) {
-
         } catch (\Error $e) {
-
         }
 
         if ($buffer === '' || $buffer === false) {
@@ -205,6 +210,53 @@ class TcpConnection extends ConnectionInterface
             $this->bytesRead += strlen($buffer);
             $this->recvBuffer .= $buffer;
         }
+
+        //if the application layer protocol has been set up
+        if ($this->protocol !== null) {
+            $parser = $this->protocol;
+            while ($this->recvBuffer !== '' && !$this->isPaused) {
+                if ($this->currentPackageLength) {
+                    if ($this->currentPackageLength > strlen($this->recvBuffer)) {
+                        break;
+                    }
+                } else {
+
+                    try {
+                        $this->currentPackageLength = $parser::input($this->recvBuffer, $this);
+                    } catch (\Exception $e) {
+                    } catch (\Error $e) {
+                    }
+                    // The packet length is unknown.
+                    if ($this->currentPackageLength === 0) {
+                        break;
+                    } elseif ($this->currentPackageLength > 0 && $this->currentPackageLength <= $this->maxPackageSize) {
+                        //Data is not enough for a package
+                        if ($this->currentPackageLength > strlen($this->recvBuffer)) {
+                            break;
+                        }
+                    } else {//Wrong package.
+                        Worker::safeEcho('Error package. package_length=' . var_export($this->currentPackageLength, true));
+                        $this->destroy();
+                        return;
+                    }
+                }
+
+                //the data is enough for a packet
+                ++self::$statistics['total_request'];
+
+                if (strlen($this->recvBuffer) === $this->currentPackageLength) {
+                    $oneRequestBuffer = $this->recvBuffer;
+                    $this->recvBuffer = '';
+                } else {
+                    $oneRequestBuffer = substr($this->recvBuffer, 0, $this->currentPackageLength);
+                    $this->recvBuffer = substr($this->recvBuffer, $this->currentPackageLength);
+                }
+
+                $this->currentPackageLength = 0;
+
+            }
+        }
+
 
         if ($this->onMessage) {
             call_user_func($this->onMessage, $this, $this->recvBuffer);
