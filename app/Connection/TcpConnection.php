@@ -53,6 +53,12 @@ class TcpConnection extends ConnectionInterface
      */
     protected $recvBuffer = '';
 
+    /**
+     * bytes written
+     * @var int
+     */
+    public $bytesWritten = 0;
+
 
     /**
      * current package length
@@ -248,20 +254,52 @@ class TcpConnection extends ConnectionInterface
                     $oneRequestBuffer = $this->recvBuffer;
                     $this->recvBuffer = '';
                 } else {
+                    //get a full package from the buffer
                     $oneRequestBuffer = substr($this->recvBuffer, 0, $this->currentPackageLength);
+                    //remote the current package from the receive buffer
                     $this->recvBuffer = substr($this->recvBuffer, $this->currentPackageLength);
                 }
-
+                //reset the current packet length to 0.
                 $this->currentPackageLength = 0;
+                if (!$this->onMessage) {
+                    continue;
+                }
 
+                try {
+                    call_user_func($this->onMessage, $this, $parser::decode($oneRequestBuffer, $this));
+                } catch (\Exception $e) {
+                    Worker::log($e);
+                    exit(250);
+                } catch (\Error $e) {
+                    Worker::log($e);
+                    exit(250);
+                }
+                return;
             }
         }
 
-
-        if ($this->onMessage) {
-            call_user_func($this->onMessage, $this, $this->recvBuffer);
+        if ($this->recvBuffer === '' || $this->isPaused) {
+            return;
+        }
+        //applications protocol is not set
+        ++self::$statistics['total_request'];
+        if (!$this->onMessage) {
+            $this->recvBuffer = '';
+            return;
         }
 
+        try {
+            call_user_func($this->onMessage, $this, $this->recvBuffer);
+        } catch (\Exception $e) {
+            Worker::log($e);
+            exit(250);
+        } catch (\Error $e) {
+            Worker::log($e);
+            exit(250);
+        }
+
+        //clean receive buffer
+        $this->recvBuffer = '';
     }
 
 
@@ -271,8 +309,42 @@ class TcpConnection extends ConnectionInterface
      */
     public function baseWrite()
     {
-        Worker::log('tttttttttttttttttttt');
-        @fwrite($this->socket, 'test');
+        set_error_handler(function () {
+        });
+        $len = @fwrite($this->socket, $this->sendBuffer);
+        restore_error_handler();
+
+        if ($len === strlen($this->sendBuffer)) {
+            $this->bytesWritten += $len;
+            Worker::$globalEvent->del($this->socket, EventInterface::EV_WRITE);
+            $this->sendBuffer = '';
+            //try to emit onBufferDrain callback when the send buffer becomes empty.
+            if ($this->onBufferDrain) {
+                try {
+                    call_user_func($this->onBufferDrain, $this);
+                } catch (\Exception $e) {
+                    Worker::log($e);
+                    exit(250);
+                } catch (\Error $e) {
+                    Worker::log($e);
+                    exit(250);
+                }
+            }
+
+            if ($this->status === self::STATUS_CLOSE) {
+                $this->destroy();
+            }
+            true;
+        }
+
+        if ($len > 0) {
+            $this->bytesWritten += $len;
+            $this->sendBuffer = substr($this->sendBuffer, $len);
+        } else {
+            ++self::$statistics['send_fail'];
+            $this->destroy();
+        }
+
     }
 
     public function destroy()
