@@ -37,10 +37,10 @@ abstract class ConnectionInterface
 
 
     /**
-//     * @param $sendBuffer
-//     * @return mixed|boolean
-//     */
-//    abstract public function send($sendBuffer);
+     * @param $sendBuffer
+     * @return mixed|boolean
+     */
+    abstract public function send($sendBuffer);
 //
 //    /**
 //     * get remote ip
@@ -84,11 +84,11 @@ abstract class ConnectionInterface
 //     */
 //    abstract public function isIpv6();
 //
-//    /**
-//     * close connection
-//     * @param $data
-//     * @return void
-//     */
-//    abstract public function close($data = null);
+    /**
+     * close connection
+     * @param $data
+     * @return void
+     */
+    abstract public function close($data = null);
 //
 }

@@ -15,14 +15,28 @@ class TcpConnection extends ConnectionInterface
     const READ_BUFFER_SIZE = 65535;
 
     /**
+     * status connecting
+     * @var int
+     */
+    const STATUS_CONNECTING = 1;
+
+    /**
      * status connection established.
+     * @var int
      */
     const STATUS_ESTABLISHED = 2;
 
     /**
-     * status closed
+     * status closing
+     * @var int
      */
-    const STATUS_CLOSE = 8;
+    const STATUS_CLOSING = 4;
+
+    /**
+     * status closed
+     * @var int
+     */
+    const STATUS_CLOSED = 8;
     /**
      * Connection->id
      * @var int
@@ -331,7 +345,7 @@ class TcpConnection extends ConnectionInterface
                 }
             }
 
-            if ($this->status === self::STATUS_CLOSE) {
+            if ($this->status === self::STATUS_CLOSED) {
                 $this->destroy();
             }
             true;
@@ -350,7 +364,7 @@ class TcpConnection extends ConnectionInterface
     public function destroy()
     {
         //avoid repeated calls.
-        if ($this->status === self::STATUS_CLOSE) {
+        if ($this->status === self::STATUS_CLOSED) {
             return;
         }
 
@@ -363,7 +377,7 @@ class TcpConnection extends ConnectionInterface
         } catch (\Error $e) {
         }
 
-        $this->status = self::STATUS_CLOSE;
+        $this->status = self::STATUS_CLOSED;
 
         if ($this->onClose) {
             try {
@@ -385,7 +399,7 @@ class TcpConnection extends ConnectionInterface
         $this->currentPackageLength = 0;
         $this->isPaused = $this->sslHandshakeCompleted = false;
         //cleaning up the callback to avoid memory leaks
-        if ($this->status === self::STATUS_CLOSE) {
+        if ($this->status === self::STATUS_CLOSED) {
             $this->onMessage = $this->onClose = $this->onError = $this->onBufferDrain = $this->onBufferFull = null;
 
             if ($this->worker) {
@@ -395,5 +409,181 @@ class TcpConnection extends ConnectionInterface
         }
 
     }
+
+    /**
+     * close connection
+     * @param mixed $data
+     * @param bool $raw
+     * @return void
+     */
+    public function close($data = null, $raw = false)
+    {
+        if ($this->status === self::STATUS_CONNECTING) {
+            $this->destroy();
+            return;
+        }
+
+        if ($this->status === self::STATUS_CLOSING || $this->status === self::STATUS_CLOSED) {
+            return;
+        }
+
+        if ($data !== null) {
+            $this->send($data, $raw);
+        }
+
+        $this->status = self::STATUS_CLOSING;
+        if ($this->sendBuffer === '') {
+            $this->destroy();
+        } else {
+            $this->pauseRecv();
+        }
+    }
+
+    /**
+     *  sends data on the connection.
+     * @param  mixed $sendBuffer
+     * @param bool $raw
+     * @return bool|null|
+     */
+    public function send($sendBuffer, $raw = false)
+    {
+        if ($this->status === self::STATUS_CLOSING || $this->status === self::STATUS_CLOSED) {
+            return false;
+        }
+
+        //Try to call protocol::encode($sendBuffer) before sending
+        if (false === $raw && $this->protocol !== null) {
+            $parser = $this->protocol;
+            $sendBuffer = $parser::encode($sendBuffer, $this);
+            if ($sendBuffer === '') {
+                return;
+            }
+        }
+
+        if ($this->status !== self::STATUS_ESTABLISHED) {
+            if ($this->sendBuffer && $this->bufferIsFull()) {
+                ++self::$statistics['send_fail'];
+                return false;
+            }
+            $this->sendBuffer .= $sendBuffer;
+            $this->checkBufferWillFull();
+            return;
+        }
+
+        //Attempt to send data directly
+        if ($this->sendBuffer === '') {
+            $len = 0;
+            try {
+                $len = @fwrite($this->socket, $sendBuffer);
+            } catch (\Exception $e) {
+                Worker::log($e);
+            } catch (\Error $e) {
+                Worker::log($e);
+            }
+
+
+            if ($len === strlen($sendBuffer)) {
+                $this->bytesWritten += $len;
+                return true;
+            }
+
+            //send only part of the data
+            if ($len > 0) {
+                $this->sendBuffer = substr($sendBuffer, $len);
+                $this->bytesWritten += $len;
+            } else {
+                if (!is_resource($this->socket) || feof($this->socket)) {
+                    ++self::$statistics['send_fail'];
+                    if ($this->onError) {
+                        try {
+                            call_user_func($this->onError, $this, WORKERMAN_SEND_FAIL, 'client closed');
+                        } catch (\Exception $e) {
+                            Worker::log($e);
+                            exit(250);
+                        } catch (\Error $e) {
+                            Worker::log($e);
+                            exit(250);
+                        }
+                    }
+                    $this->destroy();
+                    return false;
+                }
+                $this->sendBuffer = $sendBuffer;
+            }
+
+            Worker::$globalEvent->add($this->socket, EventInterface::EV_WRITE, array($this, 'baseWrite'));
+            $this->checkBufferWillFull();
+            return;
+        }
+
+        if ($this->bufferIsFull()) {
+            ++self::$statistics['send_fail'];
+            return false;
+        }
+
+        $this->sendBuffer .= $sendBuffer;
+        $this->checkBufferWillFull();
+    }
+
+
+    /**
+     * check whether the send buffer will be full
+     * @return void
+     */
+    protected function checkBufferWillFull()
+    {
+        if ($this->maxSendBufferSize <= strlen($this->sendBuffer)) {
+            if ($this->onBufferFull) {
+
+                try {
+                    call_user_func($this->onBufferFull, $this);
+                } catch (\Exception $e) {
+                    Worker::log($e);
+                    exit(250);
+                } catch (\Error $e) {
+                    Worker::log($e);
+                    exit(250);
+                }
+            }
+        }
+
+    }
+
+
+    /**
+     * Whether send buffer is full
+     * @return bool
+     */
+    protected function bufferIsFull()
+    {
+
+        if ($this->maxSendBufferSize <= strlen($this->sendBuffer)) {
+            if ($this->onError) {
+                try {
+                    call_user_func($this->onError, $this, WORKERMAN_SEND_FAIL, 'send buffer full and drop package');
+                } catch (\Exception $e) {
+                    Worker::log($e);
+                    exit(250);
+                } catch (\Error $e) {
+                    Worker::log($e);
+                    exit(250);
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+
+    /**
+     * Pauses the reading of data. that is onMessage will not be emitted. Useful to throttle back an upload.
+     * @return void
+     */
+    public function pauseRecv()
+    {
+        Worker::$globalEvent->del($this->socket, EventInterface::EV_READ);
+        $this->isPaused = true;
+    }
+
 
 }
