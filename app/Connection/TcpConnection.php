@@ -230,10 +230,12 @@ class TcpConnection extends ConnectionInterface
             $this->bytesRead += strlen($buffer);
             $this->recvBuffer .= $buffer;
         }
-
+        Worker::log("read111");
         //if the application layer protocol has been set up
         if ($this->protocol !== null) {
+            Worker::log("read222");
             $parser = $this->protocol;
+            Worker::log("$parser");
             while ($this->recvBuffer !== '' && !$this->isPaused) {
                 if ($this->currentPackageLength) {
                     if ($this->currentPackageLength > strlen($this->recvBuffer)) {
@@ -244,6 +246,7 @@ class TcpConnection extends ConnectionInterface
                     try {
                         $this->currentPackageLength = $parser::input($this->recvBuffer, $this);
                     } catch (\Exception $e) {
+                        Worker::log("error");
                     } catch (\Error $e) {
                     }
                     // The packet length is unknown.
@@ -275,10 +278,11 @@ class TcpConnection extends ConnectionInterface
                 }
                 //reset the current packet length to 0.
                 $this->currentPackageLength = 0;
+                Worker::log('read333');
                 if (!$this->onMessage) {
                     continue;
                 }
-
+                Worker::log('read');
                 try {
                     call_user_func($this->onMessage, $this, $parser::decode($oneRequestBuffer, $this));
                 } catch (\Exception $e) {

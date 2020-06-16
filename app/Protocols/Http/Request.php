@@ -52,7 +52,7 @@ class Request
         if (null === $name) {
             return $this->data['get'];
         }
-        return $this
+        return $this->data['get'][$name] ?? $default;
     }
 
 

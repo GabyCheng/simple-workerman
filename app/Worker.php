@@ -211,7 +211,6 @@ class Worker
     );
 
     protected static $availableEventLoops = array(
-        'libevent' => '\app\Events\Libevent',
         'event' => '\app\Events\Event',
     );
 
@@ -380,6 +379,10 @@ class Worker
 
         //字如其名，fork worker 进程
         static::forkWorkers();
+
+        while (true) {
+
+        }
 
     }
 
@@ -699,7 +702,8 @@ class Worker
                 break;
             }
         }
-
+        Worker::log($loopName);
+        Worker::log("ddd");
         if ($loopName) {
             //这里循环渐进，先用libevent库
             static::$eventLoopClass = static::$availableEventLoops[$loopName];
@@ -997,13 +1001,17 @@ class Worker
         if (!$newSocket) {
             return;
         }
-
+        Worker::log("accept");
         //TcpConnection
         $connection = new TcpConnection($newSocket, $remoteAddress);
         $this->connections[$connection->id] = $connection;
-        $connection->worker = $this;
+        $connection->worker                 = $this;
+        $connection->protocol               = $this->protocol;
+        $connection->transport              = $this->transport;
+        $connection->onMessage              = $this->onMessage;
+        $connection->onClose                = $this->onClose;
+        $connection->onError                = $this->onError;
 
-        $connection->onMessage = $this->onMessage;
         if ($this->onConnect) {
             call_user_func($this->onConnect, $connection);
         }

@@ -3,6 +3,7 @@
 namespace app\Protocols;
 
 use app\Connection\TcpConnection;
+use app\Worker;
 
 class Http
 {
@@ -32,7 +33,8 @@ class Http
         if (!isset($recvBuffer[512]) && isset($input[$recvBuffer])) {
             return $input[$recvBuffer];
         }
-        $crlfPos = strpos($recvBuffer, '\r\n\r\n');
+        $crlfPos = strpos($recvBuffer, "\r\n\r\n");
+        Worker::log(json_encode(var_dump($crlfPos)));
         if (false === $crlfPos) {
             //Judge whether the package length exceeds the limit
             if ($recvLen = strlen($recvBuffer) >= 16384) {
@@ -52,6 +54,7 @@ class Http
                     unset($input[key($input)]);
                 }
             }
+            Worker::log("$headLen");
             return $headLen;
         } elseif ($method !== 'POST' && $method !== 'PUT') {
             $connection->close('HTTP/1.1 400 Bad Request\r\n\r\n', true);

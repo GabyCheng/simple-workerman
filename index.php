@@ -8,20 +8,15 @@
 define('_ROOT', dirname(__FILE__) . DIRECTORY_SEPARATOR);
 require _ROOT . 'vendor/autoload.php';
 
-function youtube($url, $width=560, $height=315, $fullscreen=true)
-{
-    $arr = [];
-    $a = parse_url( $url, PHP_URL_QUERY );
-    parse_str($a, $arr);
-    print_r($arr);
-}
+// 创建一个Worker监听2345端口，使用http协议通讯
+$http_worker = new \app\Worker("http://0.0.0.0:8080");
 
-// show youtube on my page
-$url='http://www.youtube.com/watch?v=yvTd6XxgCBE&a=11';
-youtube($url, 560, 315, true);
-die;
+// 接收到浏览器发送的数据时回复hello world给浏览器
+$http_worker->onMessage = function ($connection, $request) {
+    $data['get'] = $request->get();
+};
 
-new \app\Worker("websocket://0.0.0.0:8080");
+
 \app\Worker::runAll();
 
 
