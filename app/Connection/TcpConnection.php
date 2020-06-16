@@ -172,7 +172,7 @@ class TcpConnection extends ConnectionInterface
     /**
      * Application layer protocol.
      * the format is like app\\protocols\\Http
-     * @var \app\Protocols\Websocket
+     * @var \app\Protocols\Http
      */
     public $protocol = null;
 

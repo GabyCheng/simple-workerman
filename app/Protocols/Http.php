@@ -7,6 +7,18 @@ use app\Connection\TcpConnection;
 class Http
 {
 
+    /**
+     * open cache
+     * @var bool
+     */
+    protected static $enableCache = true;
+
+
+    /**
+     * Request class name
+     * @var string
+     */
+    protected static $requestClass = 'app\Protocols\Http\Request';
 
     /**
      * Check the integrity of the package.
@@ -77,11 +89,34 @@ class Http
     {
     }
 
+
     /**
-     * @see ProtocolInterface::decode()
+     * Http decode.
+     * @param string $recvBuffer
+     * @param TcpConnection $connection
+     * @return \app\Protocols\Http\Request;
      */
     public static function decode($recvBuffer, TcpConnection $connection)
     {
+        static $requests = array();
+        $cacheable = static::$enableCache && !isset($recvBuffer[512]);
+        if (true === $cacheable && isset($request[$recvBuffer])) {
+            $request = $requests[$recvBuffer];
+            $request->connection = $connection;
+            $connection->request = $request;
+            $request->properties = array();
+            return $request;
+        }
+        $request = new static::$requestClass($recvBuffer);
+        $request->connection = $connection;
+        $connection->request = $request;
+        if (true === $cacheable) {
+            $requests[$recvBuffer] = $request;
+            if (count($requests) > 512) {
+                unset($requests[key($requests)]);
+            }
+        }
+        return $request;
     }
 
 }
