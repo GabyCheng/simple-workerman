@@ -15,6 +15,13 @@ class Worker
      */
     const STATUS_STARTING = 1;
 
+
+    /**
+     * Status shutdown
+     * @var int
+     */
+    const STATUS_SHUTDOWN = 4;
+
     /**
      * Default backlog. Backlog is the maximum length of the queue of pending connections.
      *
@@ -57,6 +64,12 @@ class Worker
      * @var null
      */
     protected static $outputDecorated = null;
+
+    /**
+     * Emitted when the master process terminated.
+     * @var callable
+     */
+    public static $onMasterStop = null;
 
     /**
      * 开始文件
@@ -196,6 +209,14 @@ class Worker
      * @var array
      */
     protected static $idMap = array();
+
+    /**
+     * All worker processes waiting for restart.
+     * The format is like this [pid=>pid, pid=>pid].
+     *
+     * @var array
+     */
+    protected static $pidToRestart = array();
 
 
     /**
@@ -376,16 +397,120 @@ class Worker
         static::unlock();
         //展示连接情况,不重要先不写
         static::displayUI();
-
         //字如其名，fork worker 进程
         static::forkWorkers();
+        static::resetStd();
+        static::monitorWorkers();
+    }
 
+
+    /**
+     * Monitor all child processes
+     * @return void
+     * @throws \Exception
+     */
+    protected static function monitorWorkers()
+    {
+        static::$_status = static::STATUS_STARTING;
         while (true) {
+            //Calls signal handlers for pending signals.
+            pcntl_signal_dispatch();
+            //挂起进程，直到子进程退出
+            $status = 0;
+            //WUNTRACED:子进程已经退出并且其状态未报告时返回。
+            $pid = pcntl_wait($status, WUNTRACED);
+            //分发信号。
+            pcntl_signal_dispatch();
+            //if a child processes already exited.
+            if ($pid > 0) {
+                //Find out which worker process exited
+                foreach (static::$pidMap as $workerId => $workerPidArray) {
+                    if (isset($workerPidArray[$pid])) {
+                        $worker = static::$workers[$workerId];
+                        //Exit status
+                        if ($status != 0) {
+                            static::log("Worker[" . $worker->name . "] exit with status $status");
+                        }
 
+                        if (!isset(static::$globalStatistics['worker_exit_info'][$workerId][$status])) {
+                            static::$globalStatistics['worker_exit_info'][$workerId][$status] = 0;
+                        }
+                        ++static::$globalStatistics['worker_exit_info'][$workerId][$status];
+
+                        //Clear process data.
+                        unset(static::$pidMap[$workerId][$pid]);
+
+                        //Mark id is available
+                        $id = static::getId($workerId, $pid);
+                        static::$pidMap[$workerId][$id] = 0;
+                        break;
+                    }
+                }
+
+
+                if (static::$_status !== static::STATUS_SHUTDOWN) {
+                    static::forkWorkers();
+                    //If reloading continue
+                    if (isset(static::$pidToRestart[$pid])) {
+                        unset(static::$pidToRestart[$pid]);
+                        //reload
+                        static::reload();
+                    }
+                }
+
+
+                if (static::$_status === static::STATUS_SHUTDOWN && !static::getAllWorkerPids()) {
+                    static::exitAndClearAll();
+                }
+            }
         }
+    }
+
+
+    protected static function reload()
+    {
 
     }
 
+    /**
+     * Exit current process
+     * @return void
+     */
+    protected static function exitAndClearAll()
+    {
+        foreach (static::$workers as $worker) {
+            $socketName = $worker->getSocketName();
+            if ($worker->transport === 'unix' && $socketName) {
+                list(, $address) = explode(':', $socketName, 2);
+                unlink($address);
+            }
+        }
+        unlink(static::$pidFile);
+        static::log("Workerman[" . basename(static::$startFile) . "] has been stopped");
+
+        if (static::$onMasterStop) {
+            call_user_func(static::$onMasterStop);
+        }
+
+        exit(0);
+    }
+
+
+    /**
+     * Get all pids of worker processes
+     * @return array
+     */
+    protected static function getAllWorkerPids()
+    {
+        //[worker_id=>[0=>$pid, 1=>$pid, ..]
+        $pidArray = array();
+        foreach (static::$pidMap as $workerPidArray) {
+            foreach ($workerPidArray as $workerPid) {
+                $pidArray[$workerPid] = $workerPid;
+            }
+        }
+        return $pidArray;
+    }
 
     /**
      * Display staring UI.
@@ -497,7 +622,7 @@ class Worker
                 static::resetStd();
             }
 
-            //移除其他的监听
+            //移除其他的监听 每次fork的时候要移除之前的监听，不是同一个实例对象 就移除监听
             foreach (static::$workers as $key => $oneWorker) {
                 if ($oneWorker->workerId !== $worker->id) {
                     //搞不懂这里先不写
@@ -507,7 +632,7 @@ class Worker
             }
 
             //删除原先的定时器，搞不懂。后面再写
-
+            Timer::delAll();
             //设置进程名称
             static::setProcessTitle(self::$processTitle . ':worker process' . $worker->name . '' . $worker->getSocketName());
 
@@ -580,8 +705,25 @@ class Worker
      */
     public function unListen()
     {
-
+        $this->pauseAccept();
+        if ($this->mainSocket) {
+            set_error_handler(function () {
+            });
+            fclose($this->mainSocket);
+            restore_error_handler();
+            $this->mainSocket = null;
+        }
     }
+
+
+    public function pauseAccept()
+    {
+        if (static::$globalEvent && false === $this->pauseAccept && $this->mainSocket) {
+            static::$globalEvent->del($this->mainSocket, EventInterface::EV_READ);
+            $this->pauseAccept = true;
+        }
+    }
+
 
     public static function delAll()
     {
@@ -616,7 +758,6 @@ class Worker
             static::$globalEvent = new $eventLoopClass;
             $this->resumeAccept();
         }
-
 
         //Reinstall signal
         static::reinstallSignal();
@@ -974,14 +1115,13 @@ class Worker
      * 接受新的连接
      * @return void
      */
-
     public function resumeAccept()
     {
         if (static::$globalEvent && true === $this->pauseAccept && $this->mainSocket) {
             if ($this->transport !== 'udp') {
                 static::$globalEvent->add($this->mainSocket, EventInterface::EV_READ, array($this, 'acceptConnection'));
             }
-//            $this->pauseAccept = false;
+            $this->pauseAccept = false;
         }
 
     }
