@@ -475,14 +475,11 @@ class TcpConnection extends ConnectionInterface
         //Try to call protocol::encode($sendBuffer) before sending
         if (false === $raw && $this->protocol !== null) {
             $parser = $this->protocol;
-            Worker::log("send....");
             $sendBuffer = $parser::encode($sendBuffer, $this);
-            Worker::log("send....end....");
             if ($sendBuffer === '') {
                 return;
             }
         }
-        Worker::log($sendBuffer);
         if ($this->status !== self::STATUS_ESTABLISHED) {
             if ($this->sendBuffer && $this->bufferIsFull()) {
                 ++self::$statistics['send_fail'];

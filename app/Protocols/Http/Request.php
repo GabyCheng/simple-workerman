@@ -67,8 +67,6 @@ class Request
     protected function parseGet()
     {
         $queryString = $this->queryString();
-        Worker::log("ppppppppppppppppppp");
-        Worker::log($queryString);
         $this->data['get'] = array();
         if ($queryString === '') {
             return;
