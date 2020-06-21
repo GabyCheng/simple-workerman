@@ -1005,12 +1005,12 @@ class Worker
         //TcpConnection
         $connection = new TcpConnection($newSocket, $remoteAddress);
         $this->connections[$connection->id] = $connection;
-        $connection->worker                 = $this;
-        $connection->protocol               = $this->protocol;
-        $connection->transport              = $this->transport;
-        $connection->onMessage              = $this->onMessage;
-        $connection->onClose                = $this->onClose;
-        $connection->onError                = $this->onError;
+        $connection->worker = $this;
+        $connection->protocol = $this->protocol;
+        $connection->transport = $this->transport;
+        $connection->onMessage = $this->onMessage;
+        $connection->onClose = $this->onClose;
+        $connection->onError = $this->onError;
 
         if ($this->onConnect) {
             call_user_func($this->onConnect, $connection);
@@ -1233,6 +1233,9 @@ class Worker
      */
     public static function log($msg)
     {
+        if (is_array($msg)) {
+            $msg = json_encode($msg);
+        }
         $msg = $msg . "\n";
 //        if (!static::$daemonize) {
 //            static::safeEcho($msg);

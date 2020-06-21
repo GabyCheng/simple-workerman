@@ -3,6 +3,8 @@
 namespace app\Protocols\Http;
 
 
+use app\Worker;
+
 class Request
 {
 
@@ -31,6 +33,11 @@ class Request
     protected static $getCache = array();
 
     /**
+     * @var array
+     */
+    public $properties = array();
+
+    /**
      * Request constructor.
      * @param $buffer
      */
@@ -50,6 +57,7 @@ class Request
             $this->parseGet();
         }
         if (null === $name) {
+            Worker::log($this->data['get']);
             return $this->data['get'];
         }
         return $this->data['get'][$name] ?? $default;
@@ -59,6 +67,8 @@ class Request
     protected function parseGet()
     {
         $queryString = $this->queryString();
+        Worker::log("ppppppppppppppppppp");
+        Worker::log($queryString);
         $this->data['get'] = array();
         if ($queryString === '') {
             return;
@@ -110,10 +120,32 @@ class Request
      */
     protected function parseHeadFirstLine()
     {
-        $firstLine = strstr($this->buffer, '\r\n', true);
+        $firstLine = strstr($this->buffer, "\r\n", true);
         $tmp = explode(' ', $firstLine, 3);
         $this->data['method'] = $tmp[0];
         $this->data['uri'] = $tmp[1] ?? '/';
+    }
+
+    /**
+     * Getter.
+     *
+     * @param $name
+     * @return mixed|null
+     */
+    public function __get($name)
+    {
+        return isset($this->properties[$name]) ? $this->properties[$name] : null;
+    }
+
+    /**
+     * Isset.
+     *
+     * @param $name
+     * @return bool
+     */
+    public function __isset($name)
+    {
+        return isset($this->properties[$name]);
     }
 
 

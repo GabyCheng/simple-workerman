@@ -106,7 +106,7 @@ class Event implements EventInterface
             case self::EV_READ:
             case self::EV_WRITE;
                 $fdKey = (int)$fd;
-                if (isset($this->allEvent[$fd][$flag])) {
+                if (isset($this->allEvent[$fdKey][$flag])) {
                     $this->allEvent[$fdKey][$flag]->del();
                     unset($this->allEvent[$fdKey][$flag]);
                 }

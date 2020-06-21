@@ -4,6 +4,7 @@ namespace app\Protocols;
 
 use app\Connection\TcpConnection;
 use app\Worker;
+use http\Env\Response;
 
 class Http
 {
@@ -34,7 +35,6 @@ class Http
             return $input[$recvBuffer];
         }
         $crlfPos = strpos($recvBuffer, "\r\n\r\n");
-        Worker::log(json_encode(var_dump($crlfPos)));
         if (false === $crlfPos) {
             //Judge whether the package length exceeds the limit
             if ($recvLen = strlen($recvBuffer) >= 16384) {
@@ -54,7 +54,7 @@ class Http
                     unset($input[key($input)]);
                 }
             }
-            Worker::log("$headLen");
+
             return $headLen;
         } elseif ($method !== 'POST' && $method !== 'PUT') {
             $connection->close('HTTP/1.1 400 Bad Request\r\n\r\n', true);
@@ -83,13 +83,6 @@ class Http
 
         $connection->close("HTTP/1.1 400 Bad Request\r\n\r\n", true);
         return 0;
-    }
-
-    /**
-     * @see ProtocolInterface::encode()
-     */
-    public static function encode($data, TcpConnection $connection)
-    {
     }
 
 
@@ -121,5 +114,40 @@ class Http
         }
         return $request;
     }
+
+    /**
+     * Http encode
+     * @param string|Response $data
+     * @param TcpConnection $connection
+     */
+    public static function encode($response, TcpConnection $connection)
+    {
+        if (isset($connection->request)) {
+            $connection->request->session = null;
+            $connection->request->connection = null;
+            $connection->request = null;
+        }
+        if (is_scalar($response) || null === $response) {
+            $extHeader = '';
+            if (isset($connection->header)) {
+                foreach ($connection->header as $name => $value) {
+                    if (is_array($value)) {
+                        foreach ($value as $item) {
+                            $extHeader = "$name:$item\r\n";
+                        }
+                    } else {
+                        $extHeader = "$name: $value\r\n";
+                    }
+                    unset($connection->header);
+                }
+            }
+            $bodyLen = strlen($response);
+
+            return "HTTP/1.1 200 OK\r\nServer: workerman\r\n{$extHeader}Connection: keep-alive\r\nContent-Type: text/html;charset=utf-8\r\nContent-Length: $bodyLen\r\n\r\n$response";
+        }
+        //资源和文件操作
+        return (string)$response;
+    }
+
 
 }

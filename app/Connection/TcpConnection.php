@@ -196,12 +196,34 @@ class TcpConnection extends ConnectionInterface
         if (function_exists('stream_set_read_buffer')) {
             stream_set_read_buffer($this->socket, 0);
         }
-        Worker::log($socket);
-        Worker::$globalEvent->add($this->socket, EventInterface::EV_WRITE, array($this, 'baseRead'));
+        Worker::$globalEvent->add($this->socket, EventInterface::EV_READ, array($this, 'baseRead'));
         $this->maxSendBufferSize = self::$defaultMaxSendBufferSize;
         $this->maxPackageSize = self::$defaultMaxPackageSize;
         $this->remoteAddress = $remoteAddress;
         static::$connection[$this->id] = $this;
+    }
+
+
+    /**
+     * Adding support of custom functions within protocols
+     *
+     * @param string $name
+     * @param array  $arguments
+     * @return void
+     */
+    public function __call($name, array $arguments) {
+        // Try to emit custom function within protocol
+        if (\method_exists($this->protocol, $name)) {
+            try {
+                return \call_user_func(array($this->protocol, $name), $this, $arguments);
+            } catch (\Exception $e) {
+                Worker::log($e);
+                exit(250);
+            } catch (\Error $e) {
+                Worker::log($e);
+                exit(250);
+            }
+        }
     }
 
 
@@ -222,6 +244,7 @@ class TcpConnection extends ConnectionInterface
         }
 
         if ($buffer === '' || $buffer === false) {
+
             if ($checkEof && (feof($socket) || !is_resource($socket) || $buffer === false)) {
                 $this->destroy();
                 return;
@@ -230,12 +253,10 @@ class TcpConnection extends ConnectionInterface
             $this->bytesRead += strlen($buffer);
             $this->recvBuffer .= $buffer;
         }
-        Worker::log("read111");
+
         //if the application layer protocol has been set up
         if ($this->protocol !== null) {
-            Worker::log("read222");
             $parser = $this->protocol;
-            Worker::log("$parser");
             while ($this->recvBuffer !== '' && !$this->isPaused) {
                 if ($this->currentPackageLength) {
                     if ($this->currentPackageLength > strlen($this->recvBuffer)) {
@@ -246,7 +267,6 @@ class TcpConnection extends ConnectionInterface
                     try {
                         $this->currentPackageLength = $parser::input($this->recvBuffer, $this);
                     } catch (\Exception $e) {
-                        Worker::log("error");
                     } catch (\Error $e) {
                     }
                     // The packet length is unknown.
@@ -278,11 +298,9 @@ class TcpConnection extends ConnectionInterface
                 }
                 //reset the current packet length to 0.
                 $this->currentPackageLength = 0;
-                Worker::log('read333');
                 if (!$this->onMessage) {
                     continue;
                 }
-                Worker::log('read');
                 try {
                     call_user_func($this->onMessage, $this, $parser::decode($oneRequestBuffer, $this));
                 } catch (\Exception $e) {
@@ -454,16 +472,17 @@ class TcpConnection extends ConnectionInterface
         if ($this->status === self::STATUS_CLOSING || $this->status === self::STATUS_CLOSED) {
             return false;
         }
-
         //Try to call protocol::encode($sendBuffer) before sending
         if (false === $raw && $this->protocol !== null) {
             $parser = $this->protocol;
+            Worker::log("send....");
             $sendBuffer = $parser::encode($sendBuffer, $this);
+            Worker::log("send....end....");
             if ($sendBuffer === '') {
                 return;
             }
         }
-
+        Worker::log($sendBuffer);
         if ($this->status !== self::STATUS_ESTABLISHED) {
             if ($this->sendBuffer && $this->bufferIsFull()) {
                 ++self::$statistics['send_fail'];
@@ -484,8 +503,6 @@ class TcpConnection extends ConnectionInterface
             } catch (\Error $e) {
                 Worker::log($e);
             }
-
-
             if ($len === strlen($sendBuffer)) {
                 $this->bytesWritten += $len;
                 return true;
