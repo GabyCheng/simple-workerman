@@ -63,7 +63,7 @@ class Event implements EventInterface
 
         switch ($flag) {
             case self::EV_SIGNAL:
-                $fdKey = (int)$flag;
+                $fdKey = (int)$fd;
                 $event = $className::signal($this->eventBase, $fd, $func);
                 if (!$event || !$event->add()) {
                     return false;
@@ -134,7 +134,7 @@ class Event implements EventInterface
     }
 
 
-    public function destory()
+    public function destroy()
     {
         foreach ($this->eventSignal as $event) {
             $event->del();

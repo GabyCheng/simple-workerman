@@ -80,7 +80,7 @@ interface EventInterface
     /**
      * @return void
      */
-    public function destory();
+    public function destroy();
 
 
     /**

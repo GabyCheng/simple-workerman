@@ -2,6 +2,7 @@
 
 namespace app;
 
+use app\Connection\ConnectionInterface;
 use app\Connection\TcpConnection;
 use app\Events\EventInterface;
 
@@ -28,6 +29,15 @@ class Worker
      * @var int
      */
     const DEFAULT_BACKLOG = 102400;
+
+
+    /**
+     * After sending the restart command to the child process KILL_WORKER_TIMER_TIME seconds,
+     * if the process is still living then forced to kill.
+     *
+     * @var int
+     */
+    const KILL_WORKER_TIMER_TIME = 2;
 
     /**
      * 日志文件
@@ -58,6 +68,12 @@ class Worker
      * @var null
      */
     protected static $outputStream = null;
+
+    /**
+     * Graceful stop or not.
+     * @var bool
+     */
+    protected static $gracefulStop = false;
 
     /**
      * 假如 $outputStream 支持装饰
@@ -300,6 +316,12 @@ class Worker
     public $onWorkerStart = null;
 
     /**
+     * Emitted when worker processes stopped
+     * @var callable
+     */
+    public $onWorkerStop = null;
+
+    /**
      * 断开连接触发
      * @var callable
      */
@@ -340,6 +362,12 @@ class Worker
      * @var string
      */
     public static $eventLoopClass = '';
+
+    /**
+     * Is worker stopping ?
+     * @var bool
+     */
+    public $stopping = false;
 
 
     /**
@@ -390,7 +418,7 @@ class Worker
         //初始化workers
         static::initWorkers();
         //安装信号
-        //static::installSignal();
+        static::installSignal();
         //保存master pid
         static::saveMasterPid();
         //解锁
@@ -412,7 +440,7 @@ class Worker
     protected static function monitorWorkers()
     {
         static::$_status = static::STATUS_STARTING;
-        while (true) {
+        while (1) {
             //Calls signal handlers for pending signals.
             pcntl_signal_dispatch();
             //挂起进程，直到子进程退出
@@ -423,6 +451,7 @@ class Worker
             pcntl_signal_dispatch();
             //if a child processes already exited.
             if ($pid > 0) {
+                Worker::log("监管." . $pid);
                 //Find out which worker process exited
                 foreach (static::$pidMap as $workerId => $workerPidArray) {
                     if (isset($workerPidArray[$pid])) {
@@ -442,7 +471,7 @@ class Worker
 
                         //Mark id is available
                         $id = static::getId($workerId, $pid);
-                        static::$pidMap[$workerId][$id] = 0;
+                        static::$idMap[$workerId][$id] = 0;
                         break;
                     }
                 }
@@ -458,7 +487,7 @@ class Worker
                     }
                 }
 
-
+                Worker::log(static::getAllWorkerPids());
                 if (static::$_status === static::STATUS_SHUTDOWN && !static::getAllWorkerPids()) {
                     static::exitAndClearAll();
                 }
@@ -795,7 +824,8 @@ class Worker
      */
     public static function reinstallSignal()
     {
-        $signalHandler = '\Workerman\Worker::signalHandler';
+
+        $signalHandler = '\app\Worker::signalHandler';
         // uninstall stop signal handler
         \pcntl_signal(\SIGINT, \SIG_IGN, false);
         // uninstall graceful stop signal handler
@@ -843,8 +873,6 @@ class Worker
                 break;
             }
         }
-        Worker::log($loopName);
-        Worker::log("ddd");
         if ($loopName) {
             //这里循环渐进，先用libevent库
             static::$eventLoopClass = static::$availableEventLoops[$loopName];
@@ -1222,10 +1250,117 @@ class Worker
      * 信号回调
      * @param $signal
      */
-    public function signalHandler($signal)
+    public static function signalHandler($signal)
     {
+        switch ($signal) {
+            //stop
+            case SIGINT:
+                static::log("接受到信号".posix_getpid());
+                static::$gracefulStop = false;
+                static::stopAll();
+                break;
+        }
 
     }
+
+
+    /**
+     * Stop
+     * @return void
+     */
+    public static function stopAll()
+    {
+        static::$_status = static::STATUS_SHUTDOWN;
+        //For master process
+        if (static::$masterPid === posix_getpid()) {
+            static::log("Workerman[" . basename(static::$startFile) . "] stopping ...");
+            $workerPidArray = static::getAllWorkerPids();
+            //Send stop signal to all child processes
+            if (static::$gracefulStop) {
+                $sig = SIGTERM;
+            } else {
+                $sig = SIGINT;
+            }
+            Worker::log("master 进程 销毁");
+            Worker::log($workerPidArray);
+            foreach ($workerPidArray as $workerPid) {
+                posix_kill($workerPid, $sig);
+                if (!static::$gracefulStop) {
+                    Timer::add(static::KILL_WORKER_TIMER_TIME, 'posix_kill', array($workerPid, SIGKILL), false);
+                }
+            }
+            Timer::add(1, "\\app\\Worker::checkIfChildRunning");
+            //Remove statistics file
+            if (is_file(static::$statisticsFile)) {
+                @unlink(static::$statisticsFile);
+            }
+        } else {//For child processes
+            //Execute exit
+            Worker::log("子进程销毁");
+            foreach (static::$workers as $worker) {
+                if (!$worker->stopping) {
+                    $worker->stop();
+                    $worker->stopping = true;
+                }
+            }
+
+            if (!static::$gracefulStop || ConnectionInterface::$statistics['connection_count'] <= 0) {
+                static::$workers = array();
+                if (static::$globalEvent) {
+                    static::$globalEvent->destroy();
+                }
+                exit(0);
+            }
+        }
+    }
+
+
+    /**
+     * Stop current worker instance.
+     */
+    public function stop()
+    {
+        //Try to emit onWorkerStop callback
+        if ($this->onWorkerStop) {
+            try {
+                call_user_func($this->onWorkerStop, $this);
+            } catch (\Exception $e) {
+                static::log($e);
+                exit(250);
+            } catch (\Error $e) {
+                static::log($e);
+                exit(250);
+            }
+        }
+
+        //Remove listener for service socket
+        $this->unListen();
+
+        if (!static::$gracefulStop) {
+            foreach ($this->connections as $connection) {
+                $connection->close();
+            }
+        }
+        // Clear callback.
+        $this->onMessage = $this->onClose = $this->onError = $this->onBufferDrain = $this->onBufferFull = null;
+    }
+
+
+    /**
+     * Check if child processes is really running
+     */
+    public static function checkIfChildRunning()
+    {
+        foreach (static::$pidMap as $workerId => $workerPidArray) {
+            foreach ($workerPidArray as $pid => $workerPid) {
+                if (!posix_kill($pid, 0)) {
+                    unset(static::$pidMap[$workerId][$pid]);
+                }
+            }
+
+        }
+    }
+
 
     /**
      * get socket name
@@ -1302,7 +1437,7 @@ class Worker
 
         //获取命令
         $command = trim($argv[1]);
-        $command2 = isset($argv[2]) ?? '';
+        $command2 = $argv[2] ?? '';
 
         $mode = '';
         if ($command === 'start') {
@@ -1322,15 +1457,17 @@ class Worker
             if ($command == 'start') {
                 static::log("Workerman[$startFile] alerady running");
                 exit;
-            } elseif ($command !== 'start' && $command !== 'restart') {
-                static::log("Workerman[$startFile] not run");
-                exit;
             }
+        } elseif ($command !== 'start' && $command !== 'restart') {
+            static::log("Workerman[$startFile] not run");
+            exit;
         }
 
         switch ($command) {
             case 'start':
+                static::log($command2);
                 if ($command2 === '-d') {
+                    static::log($command2);
                     static::$daemonize = true;
                 }
                 break;
@@ -1353,7 +1490,45 @@ class Worker
                     static::safeEcho("\n Press Ctrl+c to quit.\n\n");
                 }
                 exit(0);
-
+            case 'stop':
+                if ($command2 === '-g') {
+                    static::$gracefulStop = true;
+                    $sig = SIGTERM;
+                    static::log("Workerman[$startFile] is gracefully stopping");
+                } else {
+                    static::$gracefulStop = false;
+                    $sig = SIGINT;
+                    static::log("Workerman[$startFile] is stopping ...");
+                }
+                //Send stop signal to master process.
+                $masterPid && posix_kill($masterPid, $sig);
+                //Timeout
+                $timeout = 5;
+                $startTime = time();
+                //Check master process is still alive
+                while (1) {
+                    $masterIsAlive = $masterPid && posix_kill($masterPid, 0);
+                    if ($masterIsAlive) {
+                        //Timeout?
+                        if (!static::$gracefulStop && time() - $startTime >= $timeout) {
+                            static::log("Workerman[$startFile] stop fail");
+                            exit;
+                        }
+                        //Waiting amoment
+                        usleep(10000);
+                        continue;
+                    }
+                    // Stop success.
+                    static::log("Workerman[$startFile] stop success");
+                    if ($command === 'stop') {
+                        exit(0);
+                    }
+                    if ($command2 === '-d') {
+                        static::$daemonize = true;
+                    }
+                    break;
+                }
+                break;
             default :
                 exit(0);
         }
@@ -1377,9 +1552,9 @@ class Worker
             $msg = json_encode($msg);
         }
         $msg = $msg . "\n";
-//        if (!static::$daemonize) {
-//            static::safeEcho($msg);
-//        }
+        if (!static::$daemonize) {
+            static::safeEcho($msg);
+        }
         //守护进程
         $file = (string)static::$logFile;
         $data = date('Y-m-d H:i:s') . '' . 'pid' . posix_getpid() . $msg;

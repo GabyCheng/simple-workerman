@@ -12,8 +12,9 @@ require _ROOT . 'vendor/autoload.php';
 $http_worker = new \app\Worker("http://0.0.0.0:8080");
 
 
-DEFINE(MAXPROCESS,25);
 
+
+$http_worker->count = 1;
 // 接收到浏览器发送的数据时回复hello world给浏览器
 $http_worker->onMessage = function ($connection, $request) {
     $data['get'] = $request->get();
