@@ -24,6 +24,12 @@ class Worker
     const STATUS_SHUTDOWN = 4;
 
     /**
+     * Status reloading
+     * @var int
+     */
+    const STATUS_RELOADING = 8;
+
+    /**
      * Default backlog. Backlog is the maximum length of the queue of pending connections.
      *
      * @var int
@@ -88,6 +94,12 @@ class Worker
     public static $onMasterStop = null;
 
     /**
+     * Emitted when the master process get reload signal.
+     * @var callable
+     */
+    public static $onMasterReload = null;
+
+    /**
      * 开始文件
      * @var string
      */
@@ -111,6 +123,11 @@ class Worker
      */
     public $connections = array();
 
+    /**
+     * reloadable
+     * @var bool
+     */
+    public $reloadable = true;
 
     /**
      * Maximum length of the worker names.
@@ -322,6 +339,12 @@ class Worker
     public $onWorkerStop = null;
 
     /**
+     * Emitted when worker processes get reload signal
+     * @var callable
+     */
+    public $onWorkerReload = null;
+
+    /**
      * 断开连接触发
      * @var callable
      */
@@ -451,7 +474,7 @@ class Worker
             pcntl_signal_dispatch();
             //if a child processes already exited.
             if ($pid > 0) {
-                Worker::log("监管." . $pid);
+
                 //Find out which worker process exited
                 foreach (static::$pidMap as $workerId => $workerPidArray) {
                     if (isset($workerPidArray[$pid])) {
@@ -487,7 +510,6 @@ class Worker
                     }
                 }
 
-                Worker::log(static::getAllWorkerPids());
                 if (static::$_status === static::STATUS_SHUTDOWN && !static::getAllWorkerPids()) {
                     static::exitAndClearAll();
                 }
@@ -496,8 +518,93 @@ class Worker
     }
 
 
+    /**
+     * Execute reload
+     * @return void
+     */
     protected static function reload()
     {
+        //For master process.
+        if (static::$masterPid === posix_getpid()) {
+            //Set reloading state.
+            if (static::$_status !== static::STATUS_RELOADING && static::$_status !== static::STATUS_SHUTDOWN) {
+                static::log("Workerman[" . basename(static::$startFile) . "] reloading ");
+                static::$_status = static::STATUS_RELOADING;
+                //Try to emit onMasterReload.
+                if (static::$onMasterReload) {
+                    try {
+                        call_user_func(static::$onMasterReload);
+                    } catch (\Exception $e) {
+                        static::log($e);
+                        exit(250);
+                    } catch (\Error $e) {
+                        static::log($e);
+                        exit(250);
+                    }
+                    static::initId();
+                }
+            }
+
+            if (static::$gracefulStop) {
+                $sig = SIGQUIT;
+            } else {
+                $sig = SIGUSR1;
+            }
+
+            //Send reload signal to all child processes
+            $reloadablePidArray = array();
+            foreach (static::$pidMap as $workerId => $workerPidArray) {
+                $worker = static::$workers[$workerId];
+                if ($worker->reloadable) {
+                    foreach ($workerPidArray as $pid) {
+                        $reloadablePidArray[$pid] = $pid;
+                    }
+                } else {
+                    foreach ($workerPidArray as $pid) {
+                        //Send reload signal to a worker process which reloadable is false.
+                        posix_kill($pid, $sig);
+                    }
+                }
+            }
+
+            //Get all pids that are waiting  reload
+            static::$pidToRestart = array_intersect(static::$pidToRestart, $reloadablePidArray);
+
+            //reload complete
+            if (empty(static::$pidToRestart)) {
+                if (static::$_status !== static::STATUS_STARTING) {
+                    static::$_status = static::STATUS_STARTING;
+                }
+                return;
+            }
+
+            //Continue reload
+            $oneWorkerPid = current(static::$pidToRestart);
+            //Send  reload signal to worker process
+            posix_kill($oneWorkerPid, $sig);
+
+            if (!static::$gracefulStop) {
+                Timer::add(static::KILL_WORKER_TIMER_TIME, 'posix_kill', array($oneWorkerPid, SIGKILL), false);
+            }
+        } else {
+            reset(static::$workers);
+            $worker = \current(static::$workers);
+            // Try to emit onWorkerReload callback.
+            if ($worker->onWorkerReload) {
+                try {
+                    \call_user_func($worker->onWorkerReload, $worker);
+                } catch (\Exception $e) {
+                    static::log($e);
+                    exit(250);
+                } catch (\Error $e) {
+                    static::log($e);
+                    exit(250);
+                }
+            }
+            if ($worker->reloadable) {
+                static::stopAll();
+            }
+        }
 
     }
 
@@ -1255,9 +1362,24 @@ class Worker
         switch ($signal) {
             //stop
             case SIGINT:
-                static::log("接受到信号".posix_getpid());
                 static::$gracefulStop = false;
                 static::stopAll();
+                break;
+            //graceful stop
+            case SIGTERM:
+                static::$gracefulStop = true;
+                static::stopAll();
+                break;
+            //Reload.
+            case SIGQUIT:
+            case SIGUSR1:
+                if ($signal === SIGQUIT) {
+                    static::$gracefulStop = true;
+                } else {
+                    static::$gracefulStop = false;
+                }
+                static::$pidToRestart = static::getAllWorkerPids();
+                static::reload();
                 break;
         }
 
@@ -1281,8 +1403,7 @@ class Worker
             } else {
                 $sig = SIGINT;
             }
-            Worker::log("master 进程 销毁");
-            Worker::log($workerPidArray);
+
             foreach ($workerPidArray as $workerPid) {
                 posix_kill($workerPid, $sig);
                 if (!static::$gracefulStop) {
@@ -1296,7 +1417,6 @@ class Worker
             }
         } else {//For child processes
             //Execute exit
-            Worker::log("子进程销毁");
             foreach (static::$workers as $worker) {
                 if (!$worker->stopping) {
                     $worker->stop();
@@ -1529,8 +1649,20 @@ class Worker
                     break;
                 }
                 break;
+            case 'restart':
+            case 'reload':
+                if ($command2 === '-g') {
+                    $sig = SIGQUIT;
+                } else {
+                    $sig = SIGUSR1;
+                }
+                posix_kill($masterPid, $sig);
+                exit;
             default :
-                exit(0);
+                if (isset($command)) {
+                    static::safeEcho('Unknown command: ' . $command . "\n");
+                }
+                exit($usage);
         }
 
 
